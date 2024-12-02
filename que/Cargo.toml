@@ -1,0 +1,21 @@
+[package]
+name = "que"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bytemuck = { workspace = true }
+nix = { workspace = true }
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+
+[[bench]]
+name = "bench"
+harness = false
+
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

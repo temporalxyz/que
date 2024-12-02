@@ -1,0 +1,11 @@
+[workspace]
+members = [
+    "que",
+    "examples/*"
+]
+resolver = "2"
+
+[workspace.dependencies]
+bytemuck = { version = "1.16.3", features = ["derive", "min_const_generics"] }
+nix = { version = "0.29", features = ["event", "poll", "mman", "fs"] }
+que = { path = "que"}
