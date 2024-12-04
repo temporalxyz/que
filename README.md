@@ -54,22 +54,26 @@ To use a `shmem` object, simply use the provided functions
 let use_huge_pages = false;
 
 // Create producer & consumer
-let mut producer = Producer::<Element, N>::join_or_create_shmem(
-    "shmem",
-    #[cfg(target_os = "linux")]
-    use_huge_pages,
-)
-.unwrap();
-let mut consumer = Consumer::<Element, N>::join_shmem(
-    "shmem",
-    #[cfg(target_os = "linux")]
-    use_huge_pages,
-)
-.unwrap();
+let mut producer = unsafe {
+    Producer::<Element, N>::join_or_create_shmem(
+        "shmem",
+        #[cfg(target_os = "linux")]
+        use_huge_pages,
+    )
+    .unwrap()
+};
+let mut consumer = unsafe {
+    Consumer::<Element, N>::join_shmem(
+        "shmem",
+        #[cfg(target_os = "linux")]
+        use_huge_pages,
+    )
+    .unwrap()
+};
 ```
 
 ##### Huge Pages
-To make use of huge pages on Linux, you must first mount hugepages using `./mount_huge.sh` and then allocate some number of huge pages via `./hp.sh <N>`. By default, this uses 2MB pages so e.g. to preallocate 32MB use `./hp.sh 16`.
+To make use of huge pages on Linux, you must first mount hugepages using `./mount_huge_and_gigantic.sh` and then allocate some number of huge pages via `./hp.sh <N>`. By default, this uses 2MB pages so e.g. to preallocate 32MB use `./hp.sh 16`.
 
 
 ##### Headless & Lossless mode
@@ -77,14 +81,13 @@ There is a headless SPMC and a lossless SPSC.
 
 ###### Headless
 
-This is a fast but lossy channel. The producer will overwrite old elements when the buffer is full. This is done to achieve maximum performance, as an `is_full` check does not need to be repeated, but it is not suitable for the general case. The `lossless` branch (coming soon) restores the atomic head index and prevents the producer from writing when the buffer is full. Multiple consumers can read values without any runtime coordination by reading values with arbitrary stride (e.g. two consumers can read `[0, 2, 4, ..]` and `[1, 3, 5, ..]`).
+This is a fast but lossy channel. The producer will overwrite old elements when the buffer is full. This is done to achieve maximum performance, as an `is_full` check does not need to be repeated on each push, but it is not suitable for the general case. Multiple consumers can read values without any runtime coordination by reading values with arbitrary stride (e.g. two consumers can read `[0, 2, 4, ..]` and `[1, 3, 5, ..]`).
 
 ###### Lossless
 
-The lossless channel is spsc, as there needs to be a well-defined global tail for the producer to check for fullness. The `is_full` check is restored prior to each write.
+The lossless channel is an sps cwhich restores the atomic head index and prevents the producer from writing when the buffer is full, in addition to restoring FIFO ordering.
 
 #####
-
 
 
 [^1]: There is a multi-consumer mode for the headless spsc, but it is not FIFO!
