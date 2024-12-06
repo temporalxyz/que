@@ -31,7 +31,8 @@ impl Shmem {
     /// Open or create a shmem
     ///
     /// NOTE:
-    /// If using huge pages, expected at path /mnt/hugepages/ or /mnt/gigantic/
+    /// If using huge pages, expected at path /mnt/hugepages/ or
+    /// /mnt/gigantic/
     pub fn open_or_create(
         id: &str,
         uplined_size: i64,

@@ -107,7 +107,8 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
         }
     }
 
-    /// Attempts to read the next element. Returns `None` if the consuemr is caught up.
+    /// Attempts to read the next element. Returns `None` if the
+    /// consuemr is caught up.
     pub fn pop(&mut self) -> Option<T> {
         let spsc = unsafe { self.spsc.as_mut() };
 
@@ -131,7 +132,9 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
 
     /// Increments the consumer heartbeat.
     ///
-    /// Can be read by the producer to see that the consumer is still online if done periodically. Can also be used to ack individual messages or alert that we've joined.
+    /// Can be read by the producer to see that the consumer is still
+    /// online if done periodically. Can also be used to ack individual
+    /// messages or alert that we've joined.
     pub fn beat(&self) {
         unsafe {
             self.spsc
@@ -141,7 +144,10 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
         }
     }
 
-    /// Checks if the producer has incremented its heartbeat since last called. Can be used by the consumer to see if the producer is still online if done periodically. Can also be used to ack individual messages or alert that we've joined.
+    /// Checks if the producer has incremented its heartbeat since last
+    /// called. Can be used by the consumer to see if the producer is
+    /// still online if done periodically. Can also be used to ack
+    /// individual messages or alert that we've joined.
     pub fn producer_heartbeat(&mut self) -> bool {
         let heartbeat = unsafe {
             self.spsc
