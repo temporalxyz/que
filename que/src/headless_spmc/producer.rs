@@ -22,6 +22,7 @@ pub struct Producer<T, const N: usize> {
 unsafe impl<T, const N: usize> Send for Producer<T, N> {}
 
 impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
+    /// Joins or creates a channel backed by shared memory as a producer.
     pub unsafe fn join_or_create_shmem(
         shmem_id: &str,
         #[cfg(target_os = "linux")] page_size: PageSize,
@@ -98,6 +99,10 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         }
     }
 
+    /// Initializes a channel backed by `buffer` and joins as a producer.
+    ///
+    /// SAFETY:
+    /// This must point to a buffer of proper size and alignment.
     pub unsafe fn initialize_in(
         buffer: *mut u8,
     ) -> Result<Producer<T, N>, QueError> {
@@ -160,6 +165,10 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         }
     }
 
+    /// Joins an existing channel backed by `buffer` as a producer.
+    ///
+    /// SAFETY:
+    /// This must point to a buffer of proper size and alignment.
     pub unsafe fn join(
         buffer: *mut u8,
     ) -> Result<Producer<T, N>, QueError> {
@@ -196,6 +205,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         }
     }
 
+    /// Synchronizes the local tail with the atomic tail in the channel, publishing newly written values.
     #[inline(always)]
     pub fn sync(&mut self) {
         self.written = 0;
@@ -207,6 +217,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         }
     }
 
+    /// Write a new element to the channel.
     #[inline(always)]
     pub fn push(&mut self, value: &T) {
         let spsc = unsafe { self.spsc.as_mut() };
@@ -228,6 +239,9 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         self.written += 1;
     }
 
+    /// Increments the producer heartbeat.
+    ///
+    /// Can be read by the consumer to see that the producer is still online if done periodically. Can also be used to ack individual messages or alert that we've joined.
     pub fn beat(&self) {
         unsafe {
             self.spsc
@@ -237,6 +251,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         }
     }
 
+    /// Checks if a consumer has incremented its heartbeat since last called. Can be used by the producer to see if the consumer is still online if done periodically. Can also be used to ack individual messages or alert that we've joined.
     pub fn consumer_heartbeat(&mut self) -> bool {
         let heartbeat = unsafe {
             self.spsc

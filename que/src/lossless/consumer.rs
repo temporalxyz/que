@@ -22,7 +22,7 @@ pub struct Consumer<T, const N: usize> {
 impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
     const MODULO_MASK: usize = N - 1;
 
-    // Joins an existing shmem. Does not use huge or gigantic pages.
+    /// Joins an existing channel back by shared memory as a consumer.
     pub unsafe fn join_shmem(
         shmem_id: &str,
         #[cfg(target_os = "linux")] page_size: PageSize,
@@ -48,6 +48,11 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
         unsafe { Consumer::join(shmem.get_mut_ptr()) }
     }
 
+    /// Joins an existing channel backed by `buffer`.
+    ///
+    ///
+    /// SAFETY:
+    /// This must point to a buffer of proper size and alignment.
     pub unsafe fn join(
         buffer: *mut u8,
     ) -> Result<Consumer<T, N>, QueError> {
@@ -102,6 +107,7 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
         }
     }
 
+    /// Attempts to read the next element. Returns `None` if the consuemr is caught up.
     pub fn pop(&mut self) -> Option<T> {
         let spsc = unsafe { self.spsc.as_mut() };
 
@@ -123,6 +129,9 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
         return Some(value);
     }
 
+    /// Increments the consumer heartbeat.
+    ///
+    /// Can be read by the producer to see that the consumer is still online if done periodically. Can also be used to ack individual messages or alert that we've joined.
     pub fn beat(&self) {
         unsafe {
             self.spsc
@@ -132,6 +141,7 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
         }
     }
 
+    /// Checks if the producer has incremented its heartbeat since last called. Can be used by the consumer to see if the producer is still online if done periodically. Can also be used to ack individual messages or alert that we've joined.
     pub fn producer_heartbeat(&mut self) -> bool {
         let heartbeat = unsafe {
             self.spsc
