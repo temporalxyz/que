@@ -2,6 +2,10 @@
 name = "que"
 version = "0.1.0"
 edition = "2021"
+license = "APACHE-2.0"
+authors = ["Cavey Cool <c@temporal.xyz>", "Ben Coverston <b@temporal.xyz>"]
+description = "A high performance channel with optional backpressure, interprocess capability, and a multiconsumer mode."
+repository = "https://github.com/temporalxyz/que.git"
 
 [dependencies]
 bytemuck = { workspace = true }
