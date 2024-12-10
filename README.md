@@ -85,7 +85,7 @@ This is a fast but lossy channel. The producer will overwrite old elements when 
 
 ###### Lossless
 
-The lossless channel is an sps cwhich restores the atomic head index and prevents the producer from writing when the buffer is full, in addition to restoring FIFO ordering.
+The lossless channel is an spsc which restores the atomic head index and prevents the producer from writing when the buffer is full, in addition to restoring FIFO ordering.
 
 #####
 
