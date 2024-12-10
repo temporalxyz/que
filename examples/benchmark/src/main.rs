@@ -133,6 +133,7 @@ fn get_thread_id() -> nix::libc::pid_t {
 }
 
 #[link(name = "pthread")]
+#[cfg(target_os = "macos")]
 extern "C" {
     fn pthread_threadid_np(
         pthread: *mut nix::libc::pthread_t,

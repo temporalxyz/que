@@ -24,7 +24,13 @@ fn push_pop(c: &mut Criterion) {
     let tx = Transaction { bytes: [1; 1232] };
     const N: usize = 16384;
 
-    cleanup_shmem("sh_bench", 20201472).ok();
+    cleanup_shmem(
+        "sh_bench",
+        20201472,
+        #[cfg(target_os = "linux")]
+        PageSize::Huge,
+    )
+    .ok();
     let mut producer = unsafe {
         Producer::<Transaction<1232>, N>::join_or_create_shmem(
             "sh_bench",
