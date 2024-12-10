@@ -1,10 +1,14 @@
-use que::{headless_spmc::consumer::Consumer, page_size::PageSize};
+use que::headless_spmc::consumer::Consumer;
+
+#[cfg(target_os = "linux")]
+use que::page_size::PageSize;
 
 const N: usize = 4;
 type Element = u64;
 
 fn main() {
     // This will panic if producer does not initialize/join first!
+    #[cfg(target_os = "linux")]
     let page_size = PageSize::Standard;
     const SPSC_SIZE: usize =
         core::mem::size_of::<que::Channel<Element, N>>();

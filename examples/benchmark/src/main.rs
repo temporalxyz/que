@@ -26,17 +26,22 @@ fn main() {
         bytes: [1; TX_TEST_SIZE],
     };
 
+    #[cfg(target_os = "linux")]
     let page_size = PageSize::Huge;
+    #[cfg(not(target_os = "linux"))]
+    let page_size = PageSize::Standard;
 
     let res = cleanup_shmem(
         "sh_bench",
         page_size.mem_size(TX_TEST_SIZE * N) as i64,
+        #[cfg(target_os = "linux")]
         PageSize::Huge,
     );
     println!("{:?}", res);
     let mut producer = unsafe {
         Producer::<Transaction<TX_TEST_SIZE>, N>::join_or_create_shmem(
             "sh_bench",
+            #[cfg(target_os = "linux")]
             PageSize::Huge,
         )
         .unwrap()
@@ -44,6 +49,7 @@ fn main() {
     let mut consumer = unsafe {
         Consumer::<Transaction<TX_TEST_SIZE>, N>::join_shmem(
             "sh_bench",
+            #[cfg(target_os = "linux")]
             PageSize::Huge,
         )
         .unwrap()
@@ -52,7 +58,7 @@ fn main() {
     std::thread::Builder::new()
         .name("producer".to_string())
         .spawn(move || {
-            let tid = unsafe { get_thread_id() };
+            let tid = get_thread_id();
             println!("Producer thread TID: {:?}", tid);
             while !START_FLAG.load(std::sync::atomic::Ordering::Relaxed)
             {
@@ -76,7 +82,7 @@ fn main() {
     let h2 = std::thread::Builder::new()
         .name("consumer".to_string())
         .spawn(move || {
-            let tid = unsafe { get_thread_id() };
+            let tid = get_thread_id();
             println!("Consumer thread TID: {:?}", tid);
             while !START_FLAG.load(std::sync::atomic::Ordering::Relaxed)
             {
@@ -113,13 +119,36 @@ fn main() {
     let res = cleanup_shmem(
         "sh_bench",
         page_size.mem_size(TX_TEST_SIZE * N) as i64,
+        #[cfg(target_os = "linux")]
         page_size,
     );
     println!("{:?}", res);
 }
 
-unsafe fn get_thread_id() -> nix::libc::pid_t {
-    nix::libc::syscall(nix::libc::SYS_gettid) as nix::libc::pid_t
+#[cfg(target_os = "linux")]
+fn get_thread_id() -> nix::libc::pid_t {
+    unsafe {
+        nix::libc::syscall(nix::libc::SYS_gettid) as nix::libc::pid_t
+    }
+}
+
+#[link(name = "pthread")]
+extern "C" {
+    fn pthread_threadid_np(
+        pthread: *mut nix::libc::pthread_t,
+        thread_id: *mut u64,
+    ) -> nix::libc::c_int;
+}
+#[cfg(target_os = "macos")]
+fn get_thread_id() -> u64 {
+    let mut tid: u64 = 0;
+    let ret = unsafe {
+        pthread_threadid_np(std::ptr::null_mut(), &mut tid as *mut u64)
+    };
+    if ret != 0 {
+        panic!("Failed to get thread ID from pthread_threadid_np. Error code: {}", ret);
+    }
+    tid
 }
 
 #[inline(never)]

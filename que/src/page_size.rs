@@ -32,21 +32,50 @@ impl PageSize {
     pub fn mem_size(&self, size: usize) -> usize {
         match self {
             // shmem can be truncated arbitrarily
-            PageSize::Standard => size,
-            PageSize::Huge => get_upligned_size(Self::GIGANTIC, size),
-            PageSize::Gigantic => get_upligned_size(Self::HUGE, size),
+            PageSize::Standard => {
+                get_upligned_size(PageSize::standard(), size)
+            }
+            #[cfg(target_os = "linux")]
+            PageSize::Huge => get_upligned_size(Self::HUGE, size),
+            #[cfg(target_os = "linux")]
+            PageSize::Gigantic => {
+                get_upligned_size(Self::GIGANTIC, size)
+            }
         }
     }
 
     /// Returns `true` if [PageSize::Huge]
     #[inline(always)]
     pub fn is_huge(&self) -> bool {
-        matches!(self, PageSize::Huge)
+        #[cfg(target_os = "linux")]
+        {
+            matches!(self, PageSize::Huge)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
     }
 
     /// Returns `true` if [PageSize::Gigantic]
     #[inline(always)]
     pub fn is_gigantic(&self) -> bool {
-        matches!(self, PageSize::Gigantic)
+        #[cfg(target_os = "linux")]
+        {
+            matches!(self, PageSize::Gigantic)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
+    }
+
+    #[inline(always)]
+    pub fn standard() -> usize {
+        nix::unistd::sysconf(nix::unistd::SysconfVar::PAGE_SIZE)
+            .expect("unable to get default page size")
+            .expect("unable to get default page size")
+            .try_into()
+            .unwrap()
     }
 }

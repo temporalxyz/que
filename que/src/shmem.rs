@@ -65,6 +65,7 @@ impl Shmem {
             unsafe { OwnedFd::from_raw_fd(fd) }
         } else {
             // Default back to shm
+            // let path = format!("/dev/shm/{id}");
             let path = CString::new(id).unwrap();
 
             let fd = shm_open(
@@ -72,7 +73,10 @@ impl Shmem {
                 OFlag::O_RDWR | OFlag::O_CREAT,
                 mode,
             )?;
-            ftruncate(&fd, uplined_size)?;
+            let stat = nix::sys::stat::fstat(fd.as_raw_fd())?;
+            if stat.st_size != uplined_size {
+                ftruncate(&fd, uplined_size)?;
+            }
             fd
         };
 
@@ -83,6 +87,7 @@ impl Shmem {
         if page_size.is_huge() {
             map_flags |= MapFlags::MAP_HUGETLB;
         }
+        #[cfg(target_os = "linux")]
         if page_size.is_gigantic() {
             map_flags |= MapFlags::MAP_HUGETLB;
             map_flags |= MapFlags::MAP_HUGE_1GB;
@@ -177,13 +182,13 @@ impl Shmem {
 pub fn cleanup_shmem(
     id: &str,
     size: i64,
-    #[cfg(target_os = "linux")] huge_pages: PageSize,
+    #[cfg(target_os = "linux")] page_size: PageSize,
 ) -> Result<(), ShmemError> {
     let shmem = Shmem::open_or_create(
         id,
         size,
         #[cfg(target_os = "linux")]
-        huge_pages,
+        page_size,
     )?;
 
     shmem.close()
