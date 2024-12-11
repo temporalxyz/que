@@ -5,6 +5,7 @@ use criterion::{
 use que::{
     headless_spmc::{consumer::Consumer, producer::Producer},
     shmem::cleanup_shmem,
+    Channel,
 };
 
 #[cfg(target_os = "linux")]
@@ -24,18 +25,27 @@ fn push_pop(c: &mut Criterion) {
     let tx = Transaction { bytes: [1; 1232] };
     const N: usize = 16384;
 
+    #[cfg(target_os = "linux")]
+    let page_size = PageSize::Huge;
+    #[cfg(not(target_os = "linux"))]
+    let page_size = PageSize::Standard;
+    let buffer_size: i64 = page_size
+        .mem_size(core::mem::size_of::<Channel<Transaction<1232>, N>>())
+        .try_into()
+        .unwrap();
+
     cleanup_shmem(
         "sh_bench",
-        20201472,
+        buffer_size,
         #[cfg(target_os = "linux")]
-        PageSize::Huge,
+        page_size,
     )
     .ok();
     let mut producer = unsafe {
         Producer::<Transaction<1232>, N>::join_or_create_shmem(
             "sh_bench",
             #[cfg(target_os = "linux")]
-            PageSize::Huge,
+            page_size,
         )
         .unwrap()
     };
@@ -43,7 +53,7 @@ fn push_pop(c: &mut Criterion) {
         Consumer::<Transaction<1232>, N>::join_shmem(
             "sh_bench",
             #[cfg(target_os = "linux")]
-            PageSize::Huge,
+            page_size,
         )
         .unwrap()
     };
