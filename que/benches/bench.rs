@@ -8,7 +8,6 @@ use que::{
     Channel,
 };
 
-#[cfg(target_os = "linux")]
 use que::page_size::PageSize;
 
 #[derive(Copy, Clone, Zeroable, PartialEq, Debug)]
