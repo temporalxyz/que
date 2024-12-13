@@ -8,12 +8,15 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <sys/mman.h>
-#include <linux/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
 #include <assert.h>
+
+#if __linux__
+#include <linux/mman.h>
+#endif
 
 #include "common.h"
 
@@ -25,7 +28,7 @@ typedef struct {
 
 /* Align size to the nearest page size */
 size_t
-align_to_page_size( size_t size, size_t page_size );
+align_to_page_size( size_t size, page_size_t page_size );
 
 /* Function to open or create shared memory, with support for huge/gigantic pages */
 shmem_t
