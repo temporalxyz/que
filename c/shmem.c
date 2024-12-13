@@ -59,9 +59,6 @@ open_or_create_shmem( const char *id, size_t size, page_size_t page_size ) {
     if( shmem.mem == MAP_FAILED ) {
         perror( "mmap failed" );
         close( shmem.fd );
-        if( page_size == STANDARD_PAGE ){
-             shm_unlink(id);
-        }
         shmem.fd = -1;
         shmem.mem = NULL;
     }
