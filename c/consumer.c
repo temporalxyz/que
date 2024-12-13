@@ -93,7 +93,7 @@ CONSUMER_(pop)( CONSUMER_(consumer_t) *consumer, CHANNEL_T *value ) {
     }
 
     /* unreachable. TODO: bound loop */
-    fprintf(stderr, "unreachable");
+    fprintf( stderr, "unreachable" );
     return 1;
 }
 
