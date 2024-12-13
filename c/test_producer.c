@@ -1,3 +1,5 @@
+#include <inttypes.h>
+
 #include "common.h"
 #include "util.h"
 #include "shmem.h"
@@ -17,7 +19,7 @@ main( int argc, char *argv[] ) {
     /* Open or create shared memory */
     const char *_page_sz = parse_str_arg( &argc, &argv, "--page-size", "standard" );
     page_size_t page_sz = parse_page_size( _page_sz );
-    fprintf( stderr, "opening shmem of size %ld with page size %s\n", buffer_size, _page_sz );
+    fprintf( stderr, "opening shmem of size %zu with page size %s\n", buffer_size, _page_sz );
     shmem_t shmem = open_or_create_shmem( shmem_id, buffer_size, page_sz );
     if( !shmem.mem ) {
         return 1;
@@ -33,7 +35,7 @@ main( int argc, char *argv[] ) {
         close_shmem( shmem );
         return 1;
     }
-    fprintf( stderr, "initialized producer. magic %ld; capacity %ld\n", producer.spsc->magic, producer.spsc->capacity );
+    fprintf( stderr, "initialized producer. magic %" PRIu64 "; capacity %" PRIu64 "\n", producer.spsc->magic, producer.spsc->capacity );
 
     /* Wait for consumer to ack join */
     while( !consumer_heartbeat( &producer ) ) {}
@@ -44,7 +46,7 @@ main( int argc, char *argv[] ) {
     for( int i = 0; i < 4; i++ ) {
         PRODUCER_(push_lossless)( &producer, &value );
     }
-    fprintf( stderr, "pushed value %ld \n", value);
+    fprintf( stderr, "pushed value %" PRIu64 "\n", value);
 
     /* lossless push should fail*/
     assert( PRODUCER_(push_lossless)( &producer, &value ) == 1 ); 

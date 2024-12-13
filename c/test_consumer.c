@@ -1,3 +1,5 @@
+#include <inttypes.h>
+
 #include "common.h"
 #include "util.h"
 #include "shmem.h"
@@ -15,7 +17,7 @@ main( int argc, char *argv[] ) {
     /* Open or create shared memory */
     const char *_page_sz = parse_str_arg( &argc, &argv, "--page-size", "standard" );
     page_size_t page_sz = parse_page_size( _page_sz );
-    fprintf( stderr, "opening shmem of size %ld with page size %s\n", buffer_size, _page_sz );
+    fprintf( stderr, "opening shmem of size %zu with page size %s\n", buffer_size, _page_sz );
     shmem_t shmem = open_or_create_shmem( shmem_id, buffer_size, page_sz );
     if( !shmem.mem ) {
         return 1;
@@ -31,7 +33,7 @@ main( int argc, char *argv[] ) {
         close_shmem( shmem );
         return 1;
     }
-    fprintf( stderr, "joined consumer. magic %ld; capacity %ld\n", consumer.spsc->magic, consumer.spsc->capacity );
+    fprintf( stderr, "joined consumer. magic %" PRIu64 "; capacity %" PRIu64 "\n", consumer.spsc->magic, consumer.spsc->capacity );
 
 
     /* ack join */
@@ -42,7 +44,7 @@ main( int argc, char *argv[] ) {
     while( CONSUMER_(pop)( &consumer, &value ) ) {
         /* wait for producer to publish */
     }
-    fprintf( stderr, "read value %ld\n", value );
+    fprintf( stderr, "read value %" PRIu64 "\n", value );
 
     /* ack message */
     CONSUMER_(beat)( &consumer );
