@@ -10,7 +10,8 @@
 
 int
 main( int argc, char *argv[] ) {
-    const char *shmem_id = "/shmem";
+    const char *shmem_id = "shmem";
+    shm_unlink( shmem_id );
     size_t buffer_size = sizeof(QUE_(spsc_t)) + CHANNEL_N * sizeof(CHANNEL_T);
 
     /* Open or create shared memory */
