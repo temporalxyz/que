@@ -6,13 +6,13 @@
 const char*
 parse_str_arg( int *argc, char ***argv, const char *option, const char *default_value )
 {
-    for (int i = 1; i < *argc; i++)
+    for( int i = 1; i < *argc; i++ )
     {
-        if (strcmp((*argv)[i], option) == 0 && i + 1 < *argc)
+        if( strcmp( (*argv)[i], option ) == 0 && i + 1 < *argc )
         {
             const char *value = (*argv)[i + 1];
 
-            for (int j = i; j < *argc - 2; j++)
+            for( int j = i; j < *argc - 2; j++ )
             {
                 (*argv)[j] = (*argv)[j + 2];
             }
@@ -28,24 +28,24 @@ parse_str_arg( int *argc, char ***argv, const char *option, const char *default_
 uint64_t
 parse_ulong_arg( int *argc, char ***argv, const char *option, uint64_t default_value )
 {
-    for (int i = 1; i < *argc; i++)
+    for( int i = 1; i < *argc; i++ )
     {
-        if (strcmp((*argv)[i], option) == 0 && i + 1 < *argc)
+        if( strcmp( (*argv)[i], option ) == 0 && i + 1 < *argc )
         {
             const char *arg_value = (*argv)[i + 1];
             char *endptr;
             errno = 0;
-            uint64_t int_value = strtol(arg_value, &endptr, 10);
+            uint64_t int_value = strtol( arg_value, &endptr, 10 );
 
             // Check for errors during conversion
-            if ( errno != 0 || *endptr != '\0' )
+            if( errno != 0 || *endptr != '\0' )
             {
                 fprintf( stderr, "Invalid integer for option %s: %s\n", option, arg_value );
                 exit( EXIT_FAILURE );
             }
 
             // Shift the remaining arguments over the found ones (removes them from argv)
-            for (int j = i; j < *argc - 2; j++)
+            for( int j = i; j < *argc - 2; j++ )
             {
                 (*argv)[j] = (*argv)[j + 2];
             }
@@ -59,21 +59,23 @@ parse_ulong_arg( int *argc, char ***argv, const char *option, uint64_t default_v
 page_size_t
 parse_page_size( const char *arg )
 {
-    if (strcmp(arg, "standard") == 0)
+    if( strcmp( arg, "standard" ) == 0 )
     {
         return STANDARD_PAGE;
     }
-    else if (strcmp(arg, "huge") == 0)
+#if __linux__
+    else if( strcmp( arg, "huge" ) == 0 )
     {
         return HUGE_PAGE_2MB;
     }
-    else if (strcmp(arg, "gigantic") == 0)
+    else if( strcmp( arg, "gigantic" ) == 0 )
     {
         return GIGANTIC_PAGE_1GB;
     }
+#endif
     else
     {
-        fprintf(stderr, "Invalid page size: %s\n", arg);
-        exit(EXIT_FAILURE);
+        fprintf( stderr, "Invalid page size: %s\n", arg );
+        exit( EXIT_FAILURE );
     }
 }
