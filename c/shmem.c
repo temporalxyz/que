@@ -10,7 +10,6 @@ align_to_page_size( size_t size, page_size_t page_size ) {
             perror( "failed to retrieve page size" );
             exit(1);
         }
-        fprintf( stderr, "DEBUG: page_size_ updated from %u to %zu\n", page_size, page_size_ );
     }
     return (size + page_size_ - 1) & ~(page_size_ - 1);
 }
@@ -69,7 +68,6 @@ open_or_create_shmem( const char *id, size_t size, page_size_t page_size ) {
         return shmem;
     }
     if( stat_buf.st_size != size ) {
-        fprintf( stderr, "st size %ld vs size %ld", stat_buf.st_size, size );
         if( ftruncate( shmem.fd, size ) == -1 ) {
             perror( "ftruncate failed" );
             close( shmem.fd );
