@@ -306,6 +306,11 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
     ///
     /// Byte array is 128 byte aligned.
     pub fn get_padding_ptr(&self) -> NonNull<[u8; 112]> {
-        unsafe { self.spsc.cast::<u8>().add(512).cast() }
+        unsafe {
+            NonNull::new_unchecked(
+                self.spsc.cast::<u8>().as_ptr().add(512),
+            )
+            .cast()
+        }
     }
 }

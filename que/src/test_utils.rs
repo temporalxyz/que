@@ -33,6 +33,6 @@ impl Drop for Alloc {
 
 pub(crate) fn new_spsc_buffer<T: AnyBitPattern, const N: usize>(
 ) -> Alloc {
-    let buffer_size = size_of::<Channel<T, N>>();
+    let buffer_size = std::mem::size_of::<Channel<T, N>>();
     Alloc::new(buffer_size, 128)
 }
