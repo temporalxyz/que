@@ -79,6 +79,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
                 consumer_heartbeat: _,
                 magic,
                 buffer: _unused,
+                padding: _,
             } = spsc;
 
             tail.store(0, Ordering::Release);
@@ -146,6 +147,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
                 consumer_heartbeat: _,
                 magic,
                 buffer: _unused,
+                padding: _,
             } = spsc;
 
             tail.store(0, Ordering::Release);
@@ -274,5 +276,16 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         } else {
             false
         }
+    }
+
+    /// Returns pointer to inner padding.
+    ///
+    /// User is responsible for safe usage.
+    ///
+    /// Can be used to store metadata (e.g. hash seed).
+    ///
+    /// Byte array is 128 byte aligned.
+    pub fn get_padding_ptr(&self) -> NonNull<[u8; 112]> {
+        unsafe { self.spsc.byte_offset(512).cast() }
     }
 }

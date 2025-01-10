@@ -82,6 +82,7 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
                 consumer_heartbeat: _,
                 magic: _,
                 buffer: _unused,
+                padding: _,
             } = spsc;
 
             // Assume spsc is empty upon joining
@@ -162,5 +163,16 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
         } else {
             false
         }
+    }
+
+    /// Returns pointer to inner padding.
+    ///
+    /// User is responsible for safe usage.
+    ///
+    /// Can be used to store metadata (e.g. hash seed).
+    ///
+    /// Byte array is 128 byte aligned.
+    pub fn get_padding_ptr(&self) -> NonNull<[u8; 112]> {
+        unsafe { self.spsc.byte_offset(512).cast() }
     }
 }

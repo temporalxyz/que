@@ -18,9 +18,25 @@ pub struct Channel<T, const N: usize> {
     head: CachePaddedAtomicUsize,
     producer_heartbeat: CachePaddedAtomicUsize,
     consumer_heartbeat: CachePaddedAtomicUsize,
+    padding: [u8; 128 - 16],
     capacity: usize,
     magic: u64,
     buffer: [T; N],
+}
+
+impl<T, const N: usize> Channel<T, N> {
+    #[rustfmt::skip]
+    pub fn print_layout() {
+        println!("Channel::<{}, {N}> Layout", core::any::type_name::<T>());
+        println!("tail offset:               {}", core::mem::offset_of!(Self, tail));
+        println!("head offset:               {}", core::mem::offset_of!(Self, head));
+        println!("producer_heartbeat offset: {}", core::mem::offset_of!(Self, producer_heartbeat));
+        println!("consumer_heartbeat offset: {}", core::mem::offset_of!(Self, consumer_heartbeat));
+        println!("padding offset:            {}", core::mem::offset_of!(Self, padding));
+        println!("capacity offset:           {}", core::mem::offset_of!(Self, capacity));
+        println!("magic offset:              {}", core::mem::offset_of!(Self, magic));
+        println!("buffer offset:             {}", core::mem::offset_of!(Self, buffer));
+    }
 }
 
 /// A unique magic number identifier for the single-producer

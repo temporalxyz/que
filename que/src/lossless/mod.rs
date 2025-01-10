@@ -25,7 +25,12 @@ mod tests {
     use producer::Producer;
 
     use super::*;
-    use std::{alloc::Layout, mem::size_of};
+    use std::{
+        alloc::Layout,
+        mem::size_of,
+        ptr::NonNull,
+        sync::atomic::{AtomicU64, Ordering},
+    };
 
     /// This leaks! Only for tests!
     fn new_spsc_buffer<T: AnyBitPattern, const N: usize>() -> *mut u8 {
@@ -123,5 +128,48 @@ mod tests {
         assert!(producer.consumer_heartbeat());
 
         assert!(!producer.consumer_heartbeat());
+    }
+
+    #[test]
+    fn test_synchronized_metadata() {
+        struct SendPtr(NonNull<u8>);
+        unsafe impl Send for SendPtr {}
+
+        let buffer =
+            SendPtr(NonNull::new(new_spsc_buffer::<u64, 4>()).unwrap());
+        let producer: Producer<u64, 4> = unsafe {
+            Producer::initialize_in(buffer.0.as_ptr()).unwrap()
+        };
+
+        // Start up thread to read metadata
+        let read = std::thread::spawn(move || {
+            let buffer = buffer;
+            let consumer: Consumer<u64, 4> =
+                unsafe { Consumer::join(buffer.0.as_ptr()).unwrap() };
+            let metadata: &AtomicU64 = unsafe {
+                consumer
+                    .get_padding_ptr()
+                    .cast()
+                    .as_ref()
+            };
+            loop {
+                let value = metadata.load(Ordering::Acquire);
+                if value != 0 {
+                    return value;
+                }
+            }
+        });
+
+        // Set metadata (padding is 128-byte aligned)
+        let metadata: u64 = 12345_u64;
+        let padding_ptr: NonNull<[u8; 112]> =
+            producer.get_padding_ptr();
+        unsafe {
+            (padding_ptr.cast::<AtomicU64>())
+                .as_ref()
+                .store(metadata, Ordering::Release);
+        }
+
+        assert_eq!(read.join().unwrap(), metadata);
     }
 }

@@ -7,6 +7,8 @@ authors = ["Cavey Cool <c@temporal.xyz>", "Ben Coverston <b@temporal.xyz>"]
 description = "A high performance channel with optional backpressure, interprocess capability, and a multiconsumer mode."
 repository = "https://github.com/temporalxyz/que.git"
 
+[features]
+
 [dependencies]
 bytemuck = { workspace = true }
 nix = { workspace = true }
