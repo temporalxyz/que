@@ -4,7 +4,7 @@ pub mod producer;
 use crate::{Channel, MAGIC};
 
 const fn burst_amount<const N: usize>() -> usize {
-    // Producer can write up to 1/4 of the alloc at a time
+    // Producer can write up to 1/4 of the buffer at a time
     const BURST_DENOM: usize = 4;
 
     let x = N / BURST_DENOM;
