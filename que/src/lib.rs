@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, AtomicUsize};
+
 use bytemuck::AnyBitPattern;
 use padded_atomic::CachePaddedAtomicUsize;
 
@@ -7,6 +9,9 @@ pub mod padded_atomic;
 pub mod page_size;
 
 pub mod shmem;
+
+#[cfg(test)]
+pub(crate) mod test_utils;
 
 /// Inner type shared by the producer and consumer. Supports zero copy
 /// deserialization. This type is shared by both the headless/lossless
@@ -19,8 +24,8 @@ pub struct Channel<T, const N: usize> {
     producer_heartbeat: CachePaddedAtomicUsize,
     consumer_heartbeat: CachePaddedAtomicUsize,
     padding: [u8; 128 - 16],
-    capacity: usize,
-    magic: u64,
+    capacity: AtomicUsize,
+    magic: AtomicU64,
     buffer: [T; N],
 }
 

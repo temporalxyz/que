@@ -47,14 +47,16 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         )?;
 
         // Zerocopy deserialize the SPSC
-        let spsc: &mut Channel<T, N> =
-            unsafe { &mut *shmem.get_mut_ptr().cast() };
+        let spsc: &Channel<T, N> =
+            unsafe { &*shmem.get_mut_ptr().cast() };
 
         // Check magic
-        if spsc.magic == MAGIC {
+        let magic = spsc.magic.load(Ordering::Acquire);
+        let capacity = spsc.capacity.load(Ordering::Acquire);
+        if magic == MAGIC {
             // Check capacity
-            if spsc.capacity != N {
-                return Err(QueError::IncorrectCapacity(spsc.capacity));
+            if capacity != N {
+                return Err(QueError::IncorrectCapacity(capacity));
             }
 
             spsc.producer_heartbeat
@@ -62,14 +64,14 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
 
             // Successful join if magic and capacity is correct
             Ok(Producer {
-                spsc: NonNull::new(spsc).unwrap(),
+                spsc: NonNull::new(shmem.get_mut_ptr().cast()).unwrap(),
                 tail: spsc.tail.load(Ordering::Acquire),
                 written: 0,
                 last_consumer_heartbeat: spsc
                     .consumer_heartbeat
                     .load(Ordering::Acquire),
             })
-        } else if spsc.magic == 0 {
+        } else if magic == 0 {
             // Initialize
             let Channel {
                 tail,
@@ -84,11 +86,11 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
 
             tail.store(0, Ordering::Release);
             producer_heartbeat.store(0, Ordering::Release);
-            *capacity = N;
-            *magic = MAGIC;
+            capacity.store(N, Ordering::Release);
+            magic.store(MAGIC, Ordering::Release);
 
             Ok(Producer {
-                spsc: NonNull::new(spsc).unwrap(),
+                spsc: NonNull::new(shmem.get_mut_ptr().cast()).unwrap(),
                 tail: 0,
                 written: 0,
                 last_consumer_heartbeat: spsc
@@ -116,13 +118,15 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         assert!(buffer as usize % 128 == 0, "unaligned");
 
         // Zerocopy deserialize the SPSC
-        let spsc: &mut Channel<T, N> = &mut *buffer.cast();
+        let spsc: &Channel<T, N> = &*buffer.cast();
 
         // Check magic
-        if spsc.magic == MAGIC {
+        let magic = spsc.magic.load(Ordering::Acquire);
+        let capacity = spsc.capacity.load(Ordering::Acquire);
+        if magic == MAGIC {
             // Check capacity
-            if spsc.capacity != N {
-                return Err(QueError::IncorrectCapacity(spsc.capacity));
+            if capacity != N {
+                return Err(QueError::IncorrectCapacity(capacity));
             }
 
             spsc.producer_heartbeat
@@ -130,14 +134,14 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
 
             // Successful join if magic and capacity is correct
             Ok(Producer {
-                spsc: NonNull::new(spsc).unwrap(),
+                spsc: NonNull::new(buffer.cast()).unwrap(),
                 tail: spsc.tail.load(Ordering::Acquire),
                 written: 0,
                 last_consumer_heartbeat: spsc
                     .consumer_heartbeat
                     .load(Ordering::Acquire),
             })
-        } else if spsc.magic == 0 {
+        } else if magic == 0 {
             // Initialize
             let Channel {
                 tail,
@@ -152,11 +156,11 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
 
             tail.store(0, Ordering::Release);
             producer_heartbeat.store(0, Ordering::Release);
-            *capacity = N;
-            *magic = MAGIC;
+            capacity.store(N, Ordering::Release);
+            magic.store(MAGIC, Ordering::Release);
 
             Ok(Producer {
-                spsc: NonNull::new(spsc).unwrap(),
+                spsc: NonNull::new(buffer.cast()).unwrap(),
                 tail: 0,
                 written: 0,
                 last_consumer_heartbeat: spsc
@@ -183,23 +187,25 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         assert!(buffer as usize % 128 == 0, "unaligned");
 
         // Zerocopy deserialize the SPSC
-        let spsc: &mut Channel<T, N> = &mut *buffer.cast();
+        let spsc: &Channel<T, N> = &*buffer.cast();
 
-        if spsc.magic == MAGIC {
-            if spsc.capacity != N {
-                return Err(QueError::IncorrectCapacity(spsc.capacity));
+        let magic = spsc.magic.load(Ordering::Acquire);
+        let capacity = spsc.capacity.load(Ordering::Acquire);
+        if magic == MAGIC {
+            if capacity != N {
+                return Err(QueError::IncorrectCapacity(capacity));
             }
 
             // Successful join if magic and capacity is correct
             Ok(Producer {
-                spsc: NonNull::new(spsc).unwrap(),
+                spsc: NonNull::new(buffer.cast()).unwrap(),
                 tail: spsc.tail.load(Ordering::Acquire),
                 written: 0,
                 last_consumer_heartbeat: spsc
                     .consumer_heartbeat
                     .load(Ordering::Acquire),
             })
-        } else if spsc.magic == 0 {
+        } else if magic == 0 {
             // Technically could be corrupted but uninitialized
             // is most likely explanation
             Err(QueError::Uninitialized)
@@ -225,8 +231,6 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
     /// Write a new element to the channel.
     #[inline(always)]
     pub fn push(&mut self, value: &T) {
-        let spsc = unsafe { self.spsc.as_mut() };
-
         // Update tail if we've written past burst amount and haven't
         // updated shared atomic.
         if self.written == burst_amount::<N>() {
@@ -236,7 +240,12 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         // Write value
         let index = self.tail & (N - 1);
         unsafe {
-            *spsc.buffer.as_mut_ptr().add(index) = *value;
+            *self
+                .spsc
+                .as_mut()
+                .buffer
+                .as_mut_ptr()
+                .add(index) = *value;
         };
 
         // Increment tail and written counter

@@ -101,13 +101,15 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
         );
 
         // Zerocopy deserialize the SPSC
-        let spsc: &mut Channel<T, N> = &mut *buffer.cast();
+        let spsc: &Channel<T, N> = &*buffer.cast();
 
         // Check magic
-        if spsc.magic == MAGIC {
+        let magic = spsc.magic.load(Ordering::Acquire);
+        let capacity = spsc.capacity.load(Ordering::Acquire);
+        if magic == MAGIC {
             // Check capacity
-            if spsc.capacity != N {
-                return Err(QueError::IncorrectCapacity(spsc.capacity));
+            if capacity != N {
+                return Err(QueError::IncorrectCapacity(capacity));
             }
 
             // Initialize
@@ -128,7 +130,7 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
 
             // Successful join if magic and capacity is correct
             Ok(Consumer {
-                spsc: NonNull::new_unchecked(spsc),
+                spsc: NonNull::new_unchecked(buffer.cast()),
                 head: next_modulo(head, 0, interval),
                 interval,
                 consumer_index: 0,
@@ -136,13 +138,13 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
                     .producer_heartbeat
                     .load(Ordering::Acquire),
             })
-        } else if spsc.magic == 0 {
+        } else if magic == 0 {
             // Technically could be corrupted but uninitialized
             // is most likely explanation
             Err(QueError::Uninitialized)
         } else {
             // Magic is not MAGIC and not zero
-            println!("magic = {}; expected {}", spsc.magic, MAGIC);
+            println!("magic = {}; expected {}", magic, MAGIC);
             Err(QueError::CorruptionDetected)
         }
     }

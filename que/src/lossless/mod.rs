@@ -25,39 +25,28 @@ mod tests {
     use producer::Producer;
 
     use super::*;
+    use crate::test_utils::{new_spsc_buffer, Alloc};
+
     use std::{
-        alloc::Layout,
-        mem::size_of,
         ptr::NonNull,
         sync::atomic::{AtomicU64, Ordering},
     };
 
-    /// This leaks! Only for tests!
-    fn new_spsc_buffer<T: AnyBitPattern, const N: usize>() -> *mut u8 {
-        let buffer_size = size_of::<Channel<T, N>>();
-        let layout = Layout::from_size_align(buffer_size, 128).unwrap();
-
-        let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
-        if ptr.is_null() {
-            panic!("alloc failed during test")
-        }
-        ptr
-    }
-
-    fn new_spsc_pair<T: AnyBitPattern, const N: usize>(
-    ) -> (Producer<T, N>, Consumer<T, N>) {
-        let buffer = new_spsc_buffer::<T, N>();
+    pub(crate) fn new_spsc_pair<T: AnyBitPattern, const N: usize>(
+    ) -> (Alloc, Producer<T, N>, Consumer<T, N>) {
+        let alloc = new_spsc_buffer::<T, N>();
 
         let producer =
-            unsafe { Producer::initialize_in(buffer).unwrap() };
-        let consumer = unsafe { Consumer::join(buffer).unwrap() };
+            unsafe { Producer::initialize_in(alloc.ptr).unwrap() };
+        let consumer = unsafe { Consumer::join(alloc.ptr).unwrap() };
 
-        (producer, consumer)
+        (alloc, producer, consumer)
     }
 
     #[test]
     fn test_push_pop_multiple() {
-        let (mut producer, mut consumer) = new_spsc_pair::<u64, 8>();
+        let (_alloc, mut producer, mut consumer) =
+            new_spsc_pair::<u64, 8>();
 
         producer.push(&69).unwrap();
         producer.push(&70).unwrap();
@@ -70,7 +59,8 @@ mod tests {
 
     #[test]
     fn test_push_pop_overrun() {
-        let (mut producer, mut consumer) = new_spsc_pair::<u64, 4>();
+        let (_alloc, mut producer, mut consumer) =
+            new_spsc_pair::<u64, 4>();
 
         assert!(producer.push(&69).is_ok());
         assert!(producer.push(&70).is_ok());
@@ -86,11 +76,11 @@ mod tests {
 
     #[test]
     fn test_restart_producer() {
-        let buffer = new_spsc_buffer::<u64, 4>();
+        let alloc = new_spsc_buffer::<u64, 4>();
         let mut producer: Producer<u64, 4> =
-            unsafe { Producer::initialize_in(buffer).unwrap() };
+            unsafe { Producer::initialize_in(alloc.ptr).unwrap() };
         let mut consumer: Consumer<u64, 4> =
-            unsafe { Consumer::join(buffer).unwrap() };
+            unsafe { Consumer::join(alloc.ptr).unwrap() };
 
         producer.push(&69).unwrap();
         producer.push(&70).unwrap();
@@ -99,7 +89,7 @@ mod tests {
 
         // Restart producer, last values should be kept
         let mut producer =
-            unsafe { Producer::<u64, 4>::join(buffer).unwrap() };
+            unsafe { Producer::<u64, 4>::join(alloc.ptr).unwrap() };
 
         assert_eq!(consumer.pop(), Some(69));
 
@@ -117,13 +107,13 @@ mod tests {
 
     #[test]
     fn test_detect_offline_consumer() {
-        let buffer = new_spsc_buffer::<u64, 4>();
+        let alloc = new_spsc_buffer::<u64, 4>();
         let mut producer: Producer<u64, 4> =
-            unsafe { Producer::initialize_in(buffer).unwrap() };
+            unsafe { Producer::initialize_in(alloc.ptr).unwrap() };
         assert!(!producer.consumer_heartbeat());
 
         let consumer: Consumer<u64, 4> =
-            unsafe { Consumer::join(buffer).unwrap() };
+            unsafe { Consumer::join(alloc.ptr).unwrap() };
         consumer.beat();
         assert!(producer.consumer_heartbeat());
 
@@ -135,8 +125,8 @@ mod tests {
         struct SendPtr(NonNull<u8>);
         unsafe impl Send for SendPtr {}
 
-        let buffer =
-            SendPtr(NonNull::new(new_spsc_buffer::<u64, 4>()).unwrap());
+        let alloc = new_spsc_buffer::<u64, 4>();
+        let buffer = SendPtr(NonNull::new(alloc.ptr).unwrap());
         let producer: Producer<u64, 4> = unsafe {
             Producer::initialize_in(buffer.0.as_ptr()).unwrap()
         };

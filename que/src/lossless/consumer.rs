@@ -64,41 +64,33 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
         assert!(buffer as usize % 128 == 0, "unaligned");
 
         // Zerocopy deserialize the SPSC
-        let spsc: &mut Channel<T, N> = &mut *buffer.cast();
+        let spsc: *const Channel<T, N> = buffer.cast();
 
         // Check magic
-        if spsc.magic == MAGIC {
+        let magic = (*spsc).magic.load(Ordering::Acquire);
+        let capacity = (*spsc).capacity.load(Ordering::Acquire);
+        if magic == MAGIC {
             // Check capacity
-            if spsc.capacity != N {
-                return Err(QueError::IncorrectCapacity(spsc.capacity));
+            if capacity != N {
+                return Err(QueError::IncorrectCapacity(capacity));
             }
 
-            // Initialize
-            let Channel {
-                tail,
-                head,
-                capacity: _,
-                producer_heartbeat: _,
-                consumer_heartbeat: _,
-                magic: _,
-                buffer: _unused,
-                padding: _,
-            } = spsc;
-
             // Assume spsc is empty upon joining
-            let new_head = tail.load(Ordering::Acquire);
-            head.store(new_head, Ordering::Release);
+            let new_head = (*spsc).tail.load(Ordering::Acquire);
+            (*spsc)
+                .head
+                .store(new_head, Ordering::Release);
 
             // Successful join if magic and capacity is correct
             Ok(Consumer {
-                spsc: NonNull::new_unchecked(spsc),
+                spsc: NonNull::new_unchecked(buffer.cast()),
                 head: new_head,
                 consumer_index: 0,
-                last_producer_heartbeat: spsc
+                last_producer_heartbeat: (*spsc)
                     .producer_heartbeat
                     .load(Ordering::Acquire),
             })
-        } else if spsc.magic == 0 {
+        } else if magic == 0 {
             // Technically could be corrupted but uninitialized
             // is most likely explanation
             Err(QueError::Uninitialized)
