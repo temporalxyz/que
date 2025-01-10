@@ -1,0 +1,29 @@
+name: Rust Tests With Miri
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+  
+jobs:
+  miri:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install latest nightly
+        run: |
+          # Update and install nightly
+          rustup update nightly
+          # Add Miri for the nightly toolchain
+          rustup component add miri --toolchain nightly
+
+      - name: Run Miri tests
+        run: |
+          # Use cargo-miri to test under Miri
+          cargo +nightly miri test
