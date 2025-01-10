@@ -17,12 +17,10 @@ main( int argc, char *argv[] ) {
     /* Open or create shared memory */
     const char *_page_sz = parse_str_arg( &argc, &argv, "--page-size", "standard" );
     page_size_t page_sz = parse_page_size( _page_sz );
-    fprintf( stderr, "opening shmem of size %zu with page size %s\n", buffer_size, _page_sz );
     shmem_t shmem = open_or_create_shmem( shmem_id, buffer_size, page_sz );
     if( !shmem.mem ) {
         return 1;
     }
-    fprintf( stderr, "opened shmem\n" );
 
     /* Cast ptr */
     QUE_(spsc_t) *spsc = (QUE_(spsc_t)*)(shmem.mem);

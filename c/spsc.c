@@ -35,7 +35,7 @@ typedef struct QUE_(spsc) {
     atomic_size_t head __attribute__((aligned(128)));
     atomic_size_t producer_heartbeat __attribute__((aligned(128)));
     atomic_size_t consumer_heartbeat __attribute__((aligned(128)));
-    char c_padding[128 - sizeof(size_t)]; // Add padding; this one needs to be declared explicitly in C.
+    char c_padding[128 - sizeof(size_t)]; // Add padding; this one needs to be declared explicitly in C since the type is 8 bytes (Rust CachePaddedUsize is 128 bytes).
     char padding[128 - 2 * sizeof(uint64_t)]; // Add padding to make size a multiple of 128 bytes. This is the padding seen in the Rust lib.
     uint64_t capacity;
     uint64_t magic; /* Magic value to check initialization */
