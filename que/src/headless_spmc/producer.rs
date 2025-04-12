@@ -243,8 +243,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         unsafe {
             *(*self.spsc.as_ptr())
                 .buffer
-                .as_ptr()
-                .cast_mut()
+                .as_mut_ptr()
                 .add(index) = *value;
         };
 
