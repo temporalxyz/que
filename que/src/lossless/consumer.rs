@@ -103,15 +103,22 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
     /// Attempts to read the next element. Returns `None` if the
     /// consumer is caught up.
     pub fn pop(&mut self) -> Option<T> {
-        let spsc = unsafe { self.spsc.as_ref() };
-
         // Optimistically read value and then check if valid
         let head_index = self.head & Self::MODULO_MASK;
-        let value = unsafe { *spsc.buffer.as_ptr().add(head_index) };
+        let value = unsafe {
+            *(*self.spsc.as_ptr())
+                .buffer
+                .as_ptr()
+                .add(head_index)
+        };
 
         // Check if valid
         // 1) is not previously read value
-        let tail = spsc.tail.load(Ordering::Acquire);
+        let tail = unsafe {
+            (*self.spsc.as_ptr())
+                .tail
+                .load(Ordering::Acquire)
+        };
         let previously_read_or_uninitialized = tail <= self.head;
 
         // Nothing else to read
@@ -142,8 +149,7 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
     /// individual messages or alert that we've joined.
     pub fn producer_heartbeat(&mut self) -> bool {
         let heartbeat = unsafe {
-            self.spsc
-                .as_ref()
+            (*self.spsc.as_ptr())
                 .producer_heartbeat
                 .load(Ordering::Acquire)
         };

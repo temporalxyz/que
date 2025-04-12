@@ -137,10 +137,10 @@ mod tests {
             let consumer: Consumer<u64, 4> =
                 unsafe { Consumer::join(buffer.0.as_ptr()).unwrap() };
             let metadata: &AtomicU64 = unsafe {
-                consumer
+                &*consumer
                     .get_padding_ptr()
                     .cast()
-                    .as_ref()
+                    .as_ptr()
             };
             loop {
                 let value = metadata.load(Ordering::Acquire);
@@ -155,8 +155,7 @@ mod tests {
         let padding_ptr: NonNull<[u8; 112]> =
             producer.get_padding_ptr();
         unsafe {
-            (padding_ptr.cast::<AtomicU64>())
-                .as_ref()
+            (*padding_ptr.as_ptr().cast::<AtomicU64>())
                 .store(metadata, Ordering::Release);
         }
 

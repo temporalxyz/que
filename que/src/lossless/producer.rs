@@ -225,10 +225,11 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
 
         // Check if full
         let is_full = self.tail
-            == unsafe { self.spsc.as_ref() }
-                .head
-                .load(Ordering::Relaxed)
-                + N;
+            == unsafe {
+                (*self.spsc.as_ptr())
+                    .head
+                    .load(Ordering::Relaxed)
+            } + N;
         if is_full {
             return Err(QueError::Full);
         }
@@ -236,12 +237,9 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         // Write value if not full
         let index = self.tail & (N - 1);
         unsafe {
-            *self
-                .spsc
-                .as_ref()
+            *(*self.spsc.as_ptr())
                 .buffer
-                .as_ptr()
-                .cast_mut()
+                .as_mut_ptr()
                 .add(index) = *value;
         };
 
@@ -259,8 +257,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
     /// messages or alert that we've joined.
     pub fn beat(&self) {
         unsafe {
-            self.spsc
-                .as_ref()
+            (*self.spsc.as_ptr())
                 .producer_heartbeat
                 .fetch_add(1, Ordering::Release);
         }
@@ -272,8 +269,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
     pub fn sync(&mut self) {
         self.written = 0;
         unsafe {
-            self.spsc
-                .as_ref()
+            (*self.spsc.as_ptr())
                 .tail
                 .store(self.tail, Ordering::Release)
         }
@@ -285,8 +281,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
     /// individual messages or alert that we've joined.
     pub fn consumer_heartbeat(&mut self) -> bool {
         let heartbeat = unsafe {
-            self.spsc
-                .as_ref()
+            (*self.spsc.as_ptr())
                 .consumer_heartbeat
                 .load(Ordering::Acquire)
         };
