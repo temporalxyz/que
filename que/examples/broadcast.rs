@@ -51,8 +51,8 @@ fn main() {
 }
 
 type Element = u64;
-const N: usize = 16 * 1024;
-const NUM_MSGS: u64 = 1_000;
+const N: usize = 1024;
+const NUM_MSGS: u64 = 10_000;
 
 fn new_spsc_buffer<T: AnyBitPattern, const N: usize>() -> *mut u8 {
     let buffer_size = size_of::<Channel<T, N>>();
