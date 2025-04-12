@@ -238,9 +238,10 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         unsafe {
             *self
                 .spsc
-                .as_mut()
+                .as_ref()
                 .buffer
-                .as_mut_ptr()
+                .as_ptr()
+                .cast_mut()
                 .add(index) = *value;
         };
 
@@ -272,7 +273,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         self.written = 0;
         unsafe {
             self.spsc
-                .as_mut()
+                .as_ref()
                 .tail
                 .store(self.tail, Ordering::Release)
         }

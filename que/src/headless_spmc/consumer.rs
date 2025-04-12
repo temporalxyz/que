@@ -165,35 +165,61 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
     /// Attempts to read the next element. Returns `None` if the
     /// consuemr is caught up.
     pub fn pop(&mut self) -> Option<T> {
-        let spsc = unsafe { self.spsc.as_mut() };
-
-        // Optimistically read value and then check if valid
         loop {
-            let head_index = self.head & Self::MODULO_MASK;
-            let value =
-                unsafe { *spsc.buffer.as_ptr().add(head_index) };
+            let initial_tail = unsafe {
+                (*self.spsc.as_ptr())
+                    .tail
+                    .load(Ordering::Acquire)
+            };
 
-            // Check if valid
-            // 1) is not overrun
-            // 2) is not previously read value
-            let tail = spsc.tail.load(Ordering::Acquire);
-            let not_overrun = tail
-                <= (self
-                    .head
-                    .wrapping_add(N - burst_amount::<N>()));
-            let previously_read_or_uninitialized = tail <= self.head;
-
-            // Nothing else to read
+            // Check if there's anything to read
+            let previously_read_or_uninitialized =
+                initial_tail <= self.head;
             if previously_read_or_uninitialized {
                 return None;
             }
 
-            // If overrun, update head and try again
+            // Check for overrun
+            let not_overrun = initial_tail
+                <= (self
+                    .head
+                    .wrapping_add(N - burst_amount::<N>()));
             if !not_overrun {
+                // Must reset to next integer that is consumer_index % interval
+                self.head = next_modulo(
+                    initial_tail.wrapping_sub(N - burst_amount::<N>()),
+                    self.consumer_index,
+                    self.interval,
+                );
+                continue;
+            }
+
+            // Optimistically read value and then check if valid
+            let head_index = self.head & Self::MODULO_MASK;
+            let value = unsafe {
+                *(*self.spsc.as_ptr())
+                    .buffer
+                    .as_ptr()
+                    .add(head_index)
+            };
+
+            // Check if still not overrun
+            let current_tail = unsafe {
+                (*self.spsc.as_ptr())
+                    .tail
+                    .load(Ordering::Acquire)
+            };
+            let still_not_overrun = current_tail
+                <= (self
+                    .head
+                    .wrapping_add(N - burst_amount::<N>()));
+
+            // If overrun, update head and try again
+            if !still_not_overrun {
                 // Must reset to next integer that is consumer_index %
                 // interval
                 self.head = next_modulo(
-                    tail.wrapping_sub(N - burst_amount::<N>()),
+                    current_tail.wrapping_sub(N - burst_amount::<N>()),
                     self.consumer_index,
                     self.interval,
                 );
@@ -212,8 +238,7 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
     /// messages or alert that we've joined.
     pub fn beat(&self) {
         unsafe {
-            self.spsc
-                .as_ref()
+            (*self.spsc.as_ptr())
                 .consumer_heartbeat
                 .fetch_add(1, Ordering::Release);
         }
@@ -225,8 +250,7 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
     /// individual messages or alert that we've joined.
     pub fn producer_heartbeat(&mut self) -> bool {
         let heartbeat = unsafe {
-            self.spsc
-                .as_ref()
+            (*self.spsc.as_ptr())
                 .producer_heartbeat
                 .load(Ordering::Acquire)
         };

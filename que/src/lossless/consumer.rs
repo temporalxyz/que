@@ -101,9 +101,9 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
     }
 
     /// Attempts to read the next element. Returns `None` if the
-    /// consuemr is caught up.
+    /// consumer is caught up.
     pub fn pop(&mut self) -> Option<T> {
-        let spsc = unsafe { self.spsc.as_mut() };
+        let spsc = unsafe { self.spsc.as_ref() };
 
         // Optimistically read value and then check if valid
         let head_index = self.head & Self::MODULO_MASK;
@@ -130,8 +130,7 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
     /// messages or alert that we've joined.
     pub fn beat(&self) {
         unsafe {
-            self.spsc
-                .as_ref()
+            (*self.spsc.as_ptr())
                 .consumer_heartbeat
                 .fetch_add(1, Ordering::Release);
         }
