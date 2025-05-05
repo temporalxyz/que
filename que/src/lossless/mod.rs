@@ -68,10 +68,15 @@ mod tests {
         assert!(producer.push(&72).is_ok());
         assert!(producer.push(&73).is_err());
 
-        // since burst_amount here is 1, we will only read last 3
         assert_eq!(consumer.pop(), Some(69));
         assert_eq!(consumer.pop(), Some(70));
         assert_eq!(consumer.pop(), Some(71));
+        assert_eq!(consumer.pop(), Some(72));
+
+        // This should now succeed, along with next read
+        assert!(producer.push(&73).is_ok());
+        producer.sync();
+        assert_eq!(consumer.pop(), Some(73));
     }
 
     #[test]

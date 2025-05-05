@@ -7,7 +7,7 @@ use crate::{
     error::QueError, page_size::PageSize, shmem::Shmem, MAGIC,
 };
 
-use super::Channel;
+use super::{burst_amount, Channel};
 
 unsafe impl<T, const N: usize> Send for Consumer<T, N> {}
 
@@ -15,6 +15,7 @@ unsafe impl<T, const N: usize> Send for Consumer<T, N> {}
 pub struct Consumer<T, const N: usize> {
     spsc: NonNull<Channel<T, N>>,
     head: usize,
+    items_since_last_sync: usize,
     consumer_index: usize,
     last_producer_heartbeat: usize,
 }
@@ -85,6 +86,7 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
             Ok(Consumer {
                 spsc: NonNull::new_unchecked(buffer.cast()),
                 head: new_head,
+                items_since_last_sync: 0,
                 consumer_index: 0,
                 last_producer_heartbeat: (*spsc)
                     .producer_heartbeat
@@ -127,6 +129,8 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
         }
 
         self.head += 1;
+        self.items_since_last_sync += 1;
+        self.maybe_sync();
         return Some(value);
     }
 
@@ -175,6 +179,19 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
                 self.spsc.cast::<u8>().as_ptr().add(512),
             )
             .cast()
+        }
+    }
+
+    #[inline(always)]
+    fn maybe_sync(&self) {
+        let do_sync = self.items_since_last_sync >= burst_amount::<N>();
+
+        if do_sync {
+            unsafe {
+                (*self.spsc.as_ptr())
+                    .head
+                    .store(self.head, Ordering::Release);
+            }
         }
     }
 }
