@@ -217,12 +217,6 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
     /// [QueError::Full].
     #[inline(always)]
     pub fn push(&mut self, value: &T) -> Result<(), QueError> {
-        // Update tail if we've written past burst amount and haven't
-        // updated shared atomic.
-        if self.written == burst_amount::<N>() {
-            self.sync();
-        }
-
         // Check if full
         let is_full = self.tail
             == unsafe {
@@ -246,6 +240,12 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         // Increment tail and written counter
         self.tail += 1;
         self.written += 1;
+
+        // Update tail if we've written past burst amount and haven't
+        // updated shared atomic.
+        if self.written == burst_amount::<N>() {
+            self.sync();
+        }
 
         Ok(())
     }

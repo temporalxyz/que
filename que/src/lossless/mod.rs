@@ -46,7 +46,7 @@ mod tests {
     #[test]
     fn test_push_pop_multiple() {
         let (_alloc, mut producer, mut consumer) =
-            new_spsc_pair::<u64, 8>();
+            new_spsc_pair::<u64, 16>();
 
         producer.push(&69).unwrap();
         producer.push(&70).unwrap();
@@ -75,16 +75,15 @@ mod tests {
 
         // This should now succeed, along with next read
         assert!(producer.push(&73).is_ok());
-        producer.sync();
         assert_eq!(consumer.pop(), Some(73));
     }
 
     #[test]
     fn test_restart_producer() {
-        let alloc = new_spsc_buffer::<u64, 4>();
-        let mut producer: Producer<u64, 4> =
+        let alloc = new_spsc_buffer::<u64, 16>();
+        let mut producer: Producer<u64, 16> =
             unsafe { Producer::initialize_in(alloc.ptr).unwrap() };
-        let mut consumer: Consumer<u64, 4> =
+        let mut consumer: Consumer<u64, 16> =
             unsafe { Consumer::join(alloc.ptr).unwrap() };
 
         producer.push(&69).unwrap();
@@ -94,7 +93,7 @@ mod tests {
 
         // Restart producer, last values should be kept
         let mut producer =
-            unsafe { Producer::<u64, 4>::join(alloc.ptr).unwrap() };
+            unsafe { Producer::<u64, 16>::join(alloc.ptr).unwrap() };
 
         assert_eq!(consumer.pop(), Some(69));
 
