@@ -14,6 +14,7 @@ bytemuck = { workspace = true }
 nix = { workspace = true }
 
 [dev-dependencies]
+bytemuck = { workspace = true, features = ["derive", "min_const_generics"] }
 criterion = "0.5.1"
 
 

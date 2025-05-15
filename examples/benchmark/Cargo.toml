@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bytemuck = { workspace = true }
+bytemuck = { workspace = true, features = ["derive", "min_const_generics"] }
 nix = { workspace = true }
 que = { workspace = true }
