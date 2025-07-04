@@ -5,12 +5,12 @@ use que::{
     headless_spmc::{consumer::Consumer, producer::Producer},
     page_size::PageSize,
     shmem::cleanup_shmem,
-    Channel,
+    Channel, LocalMode, ShmemMode,
 };
 
 /// This leaks! Only for tests!
 fn new_spsc_buffer<T: AnyBitPattern, const N: usize>() -> *mut u8 {
-    let buffer_size = size_of::<Channel<Element, N>>();
+    let buffer_size = size_of::<Channel<LocalMode, Element, N>>();
     let layout = Layout::from_size_align(buffer_size, 128).unwrap();
 
     let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
@@ -22,7 +22,7 @@ fn new_spsc_buffer<T: AnyBitPattern, const N: usize>() -> *mut u8 {
 
 const N: usize = 1024;
 type Element = u64;
-const SPSC_SIZE: usize = size_of::<Channel<Element, N>>();
+const SPSC_SIZE: usize = size_of::<Channel<LocalMode, Element, N>>();
 
 fn main() {
     with_process_exclusive_mem();
@@ -37,13 +37,15 @@ fn with_process_exclusive_mem() {
 
     // Create producer & consumer
     let mut producer = unsafe {
-        Producer::<Element, N>::initialize_in(buffer).unwrap()
+        Producer::<LocalMode, Element, N>::join_or_initialize_in(buffer)
+            .unwrap()
     };
-    let mut consumer =
-        unsafe { Consumer::<Element, N>::join(buffer).unwrap() };
+    let mut consumer = unsafe {
+        Consumer::<LocalMode, Element, N>::join(buffer).unwrap()
+    };
 
     // Push & pop
-    producer.push(&69);
+    producer.push(69);
     producer.sync();
     assert_eq!(consumer.pop().unwrap(), 69);
 
@@ -53,7 +55,7 @@ fn with_process_exclusive_mem() {
 fn with_shmem(page_size: PageSize) {
     // Create producer & consumer
     let mut producer = unsafe {
-        Producer::<Element, N>::join_or_create_shmem(
+        Producer::<ShmemMode, Element, N>::join_or_create_shmem(
             "shmem",
             #[cfg(target_os = "linux")]
             page_size,
@@ -61,7 +63,7 @@ fn with_shmem(page_size: PageSize) {
         .unwrap()
     };
     let mut consumer = unsafe {
-        Consumer::<Element, N>::join_shmem(
+        Consumer::<ShmemMode, Element, N>::join_shmem(
             "shmem",
             #[cfg(target_os = "linux")]
             page_size,
@@ -70,7 +72,7 @@ fn with_shmem(page_size: PageSize) {
     };
 
     // Push & pop
-    producer.push(&69);
+    producer.push(69);
     producer.sync();
     assert_eq!(consumer.pop().unwrap(), 69);
 

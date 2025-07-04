@@ -8,6 +8,7 @@ use que::{
     headless_spmc::{consumer::Consumer, producer::Producer},
     page_size::PageSize,
     shmem::cleanup_shmem,
+    ShmemMode,
 };
 
 #[derive(Copy, Clone, Zeroable, PartialEq, Debug)]
@@ -39,7 +40,7 @@ fn main() {
     );
     println!("{:?}", res);
     let mut producer = unsafe {
-        Producer::<Transaction<TX_TEST_SIZE>, N>::join_or_create_shmem(
+        Producer::<ShmemMode, Transaction<TX_TEST_SIZE>, N>::join_or_create_shmem(
             "sh_bench",
             #[cfg(target_os = "linux")]
             PageSize::Huge,
@@ -47,7 +48,7 @@ fn main() {
         .unwrap()
     };
     let mut consumer = unsafe {
-        Consumer::<Transaction<TX_TEST_SIZE>, N>::join_shmem(
+        Consumer::<ShmemMode, Transaction<TX_TEST_SIZE>, N>::join_shmem(
             "sh_bench",
             #[cfg(target_os = "linux")]
             PageSize::Huge,
@@ -65,7 +66,7 @@ fn main() {
             }
             let timer = Instant::now();
             for _ in 0..ITERS {
-                producer.push(&tx);
+                producer.push(tx);
                 producer.sync();
             }
             let elapsed = timer.elapsed();
@@ -154,7 +155,7 @@ fn get_thread_id() -> u64 {
 
 #[inline(never)]
 fn consume_until_empty(
-    consumer: &mut Consumer<Transaction<TX_TEST_SIZE>, N>,
+    consumer: &mut Consumer<ShmemMode, Transaction<TX_TEST_SIZE>, N>,
 ) -> usize {
     let mut consumed: usize = 0;
     let mut empty: usize = 0;
