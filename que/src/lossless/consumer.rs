@@ -1,5 +1,5 @@
-use std::ptr::NonNull;
 use std::sync::atomic::Ordering;
+use std::{ptr::NonNull, sync::Arc};
 
 use bytemuck::AnyBitPattern;
 
@@ -59,6 +59,8 @@ impl<M: ChannelMode<T>, T, const N: usize> Consumer<M, T, N> {
     ///
     /// SAFETY:
     /// This must point to a buffer of proper size and alignment.
+    ///
+    /// In LocalMode, must point to a region allocated by an Arc with the strong count already incremented!
     pub unsafe fn join(
         buffer: *mut u8,
     ) -> Result<Consumer<M, T, N>, QueError> {
@@ -70,7 +72,7 @@ impl<M: ChannelMode<T>, T, const N: usize> Consumer<M, T, N> {
         assert!(buffer as usize % 128 == 0, "unaligned");
 
         // Zerocopy deserialize the SPSC
-        let spsc: *const Channel<M, T, N> = buffer.cast();
+        let spsc: *mut Channel<M, T, N> = buffer.cast();
 
         // Check magic
         let magic = (*spsc).magic.load(Ordering::Acquire);
@@ -86,6 +88,12 @@ impl<M: ChannelMode<T>, T, const N: usize> Consumer<M, T, N> {
             (*spsc)
                 .head
                 .store(new_head, Ordering::Release);
+
+            if M::BACKED_BY_ARCC {
+                unsafe {
+                    Arc::increment_strong_count(spsc);
+                }
+            }
 
             // Successful join if magic and capacity is correct
             Ok(Consumer {
@@ -200,6 +208,15 @@ impl<M: ChannelMode<T>, T, const N: usize> Consumer<M, T, N> {
                     .head
                     .store(self.head, Ordering::Release);
             }
+        }
+    }
+}
+
+impl<M: ChannelMode<T>, T, const N: usize> Drop for Consumer<M, T, N> {
+    fn drop(&mut self) {
+        // LocalMode is backed by arc
+        if M::BACKED_BY_ARCC {
+            unsafe { drop(Arc::from_raw(self.spsc.as_ptr())) }
         }
     }
 }

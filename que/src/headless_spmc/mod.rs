@@ -1,7 +1,7 @@
 pub mod consumer;
 pub mod producer;
 
-use std::{mem::MaybeUninit, sync::Arc};
+use std::{array, mem::MaybeUninit, sync::Arc};
 
 use consumer::Consumer;
 use producer::Producer;
@@ -13,13 +13,54 @@ pub fn headless_pair<T: Send, const N: usize>(
     let arc_uninit = Arc::<Channel<LocalMode, T, N>>::new_uninit();
     let ptr: *mut MaybeUninit<Channel<LocalMode, T, N>> =
         Arc::into_raw(arc_uninit).cast_mut();
-    unsafe { *ptr = core::mem::zeroed() };
 
-    let producer =
-        unsafe { Producer::join_or_initialize_in(ptr.cast()).unwrap() };
-    let consumer = unsafe { Consumer::join(ptr.cast()).unwrap() };
+    unsafe {
+        *ptr = core::mem::zeroed();
+    }
+
+    let producer = unsafe {
+        Producer::join_or_initialize_in_(ptr.cast()).unwrap()
+    };
+    let consumer =
+        unsafe { Consumer::join_multi_(ptr.cast(), 0, 1).unwrap() };
+
+    unsafe {
+        Arc::decrement_strong_count(ptr);
+    }
 
     (producer, consumer)
+}
+
+pub fn headless_multi<
+    T: Send,
+    const N: usize,
+    const NUM_CONSUMERS: usize,
+>() -> (
+    Producer<LocalMode, T, N>,
+    [Consumer<LocalMode, T, N>; NUM_CONSUMERS],
+) {
+    let arc_uninit = Arc::<Channel<LocalMode, T, N>>::new_uninit();
+    let ptr: *mut MaybeUninit<Channel<LocalMode, T, N>> =
+        Arc::into_raw(arc_uninit).cast_mut();
+
+    unsafe { *ptr = core::mem::zeroed() };
+    let producer = unsafe {
+        Producer::join_or_initialize_in_(ptr.cast()).unwrap()
+    };
+
+    let mut consumers = array::from_fn(|_| {
+        MaybeUninit::<Consumer<LocalMode, T, N>>::uninit()
+    });
+    for i in 0..NUM_CONSUMERS {
+        consumers[i].write(unsafe {
+            Consumer::join_multi_(ptr.cast(), i, NUM_CONSUMERS).unwrap()
+        });
+    }
+    unsafe {
+        Arc::decrement_strong_count(ptr);
+    }
+
+    (producer, consumers.map(|m| unsafe { m.assume_init() }))
 }
 
 const fn burst_amount<const N: usize>() -> usize {
@@ -37,33 +78,14 @@ const fn burst_amount<const N: usize>() -> usize {
 
 #[cfg(test)]
 mod tests {
-    use consumer::Consumer;
     use producer::Producer;
 
     use super::*;
-    use crate::{
-        utils::{new_spsc_buffer, Alloc},
-        LocalMode,
-    };
-
-    /// This leaks! Only for tests!
-    pub(crate) fn new_spsc_pair<T: Send, const N: usize>(
-    ) -> (Alloc, Producer<LocalMode, T, N>, Consumer<LocalMode, T, N>)
-    {
-        let alloc = new_spsc_buffer::<T, N>();
-
-        let producer = unsafe {
-            Producer::join_or_initialize_in(alloc.ptr).unwrap()
-        };
-        let consumer = unsafe { Consumer::join(alloc.ptr).unwrap() };
-
-        (alloc, producer, consumer)
-    }
+    use crate::LocalMode;
 
     #[test]
     fn test_push_pop_multiple() {
-        let (_alloc, mut producer, mut consumer) =
-            new_spsc_pair::<u64, 8>();
+        let (mut producer, mut consumer) = headless_pair::<u64, 8>();
 
         producer.push(69);
         producer.push(70);
@@ -76,8 +98,7 @@ mod tests {
 
     #[test]
     fn test_push_pop_overrun() {
-        let (_alloc, mut producer, mut consumer) =
-            new_spsc_pair::<u64, 4>();
+        let (mut producer, mut consumer) = headless_pair::<u64, 4>();
 
         producer.push(69);
         producer.push(70);
@@ -94,14 +115,8 @@ mod tests {
 
     #[test]
     fn test_multi_consumer_sequential_reads() {
-        let alloc = new_spsc_buffer::<u64, 4>();
-        let mut producer: Producer<LocalMode, u64, 4> = unsafe {
-            Producer::join_or_initialize_in(alloc.ptr).unwrap()
-        };
-        let mut consumer1: Consumer<LocalMode, u64, 4> =
-            unsafe { Consumer::join_multi(alloc.ptr, 2).unwrap() };
-        let mut consumer2 = consumer1.next_multi().unwrap();
-
+        let (mut producer, [mut consumer1, mut consumer2]) =
+            headless_multi::<u64, 4, 2>();
         producer.push(69);
         producer.push(70);
         producer.push(71);
@@ -118,13 +133,8 @@ mod tests {
 
     #[test]
     fn test_multi_consumer_interleave_reads() {
-        let alloc = new_spsc_buffer::<u64, 4>();
-        let mut producer: Producer<LocalMode, u64, 4> = unsafe {
-            Producer::join_or_initialize_in(alloc.ptr).unwrap()
-        };
-        let mut consumer1: Consumer<LocalMode, u64, 4> =
-            unsafe { Consumer::join_multi(alloc.ptr, 2).unwrap() };
-        let mut consumer2 = consumer1.next_multi().unwrap();
+        let (mut producer, [mut consumer1, mut consumer2]) =
+            headless_multi::<u64, 4, 2>();
 
         producer.push(69);
         producer.push(70);
@@ -141,13 +151,8 @@ mod tests {
 
     #[test]
     fn test_multi_consumer_uninitialized() {
-        let alloc = new_spsc_buffer::<u64, 4>();
-        let mut producer: Producer<LocalMode, u64, 4> = unsafe {
-            Producer::join_or_initialize_in(alloc.ptr).unwrap()
-        };
-        let mut consumer1: Consumer<LocalMode, u64, 4> =
-            unsafe { Consumer::join_multi(alloc.ptr, 2).unwrap() };
-        let mut consumer2 = consumer1.next_multi().unwrap();
+        let (mut producer, [mut consumer1, mut consumer2]) =
+            headless_multi::<u64, 4, 2>();
 
         // Current state
         // tail = 0
@@ -172,21 +177,20 @@ mod tests {
 
     #[test]
     fn test_restart_producer() {
-        let alloc = new_spsc_buffer::<u64, 4>();
-        let mut producer: Producer<LocalMode, u64, 4> = unsafe {
-            Producer::join_or_initialize_in(alloc.ptr).unwrap()
-        };
-        let mut consumer: Consumer<LocalMode, u64, 4> =
-            unsafe { Consumer::join(alloc.ptr).unwrap() };
+        let (mut producer, mut consumer) = headless_pair::<u64, 4>();
 
         producer.push(69);
         producer.push(70);
         producer.sync();
-        drop(producer);
+        let spsc_ptr = (&raw mut producer);
+        drop(producer); // we forget since localmode producers decrement strong count
 
         // Restart producer, last values should be kept
         let mut producer = unsafe {
-            Producer::<LocalMode, u64, 4>::join(alloc.ptr).unwrap()
+            Producer::<LocalMode, u64, 4>::join_(
+                *spsc_ptr.cast::<*mut u8>(),
+            )
+            .unwrap()
         };
 
         assert_eq!(consumer.pop(), Some(69));
@@ -205,19 +209,13 @@ mod tests {
 
     #[test]
     fn test_detect_offline_consumer() {
-        let alloc = new_spsc_buffer::<u64, 4>();
-        let mut producer: Producer<LocalMode, u64, 4> = unsafe {
-            Producer::join_or_initialize_in(alloc.ptr).unwrap()
-        };
+        let (mut producer, [consumer1, consumer2]) =
+            headless_multi::<u64, 4, 2>();
         assert!(!producer.consumer_heartbeat());
 
-        let consumer1: Consumer<LocalMode, u64, 4> =
-            unsafe { Consumer::join_multi(alloc.ptr, 2).unwrap() };
         consumer1.beat();
         assert!(producer.consumer_heartbeat());
 
-        let consumer2: Consumer<LocalMode, u64, 4> =
-            consumer1.next_multi().unwrap();
         consumer2.beat();
         assert!(producer.consumer_heartbeat());
 

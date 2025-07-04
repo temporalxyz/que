@@ -1,24 +1,13 @@
-use std::{alloc::Layout, mem::size_of};
+use std::mem::size_of;
 
-use bytemuck::AnyBitPattern;
 use que::{
-    headless_spmc::{consumer::Consumer, producer::Producer},
+    headless_spmc::{
+        consumer::Consumer, headless_pair, producer::Producer,
+    },
     page_size::PageSize,
     shmem::cleanup_shmem,
     Channel, LocalMode, ShmemMode,
 };
-
-/// This leaks! Only for tests!
-fn new_spsc_buffer<T: AnyBitPattern, const N: usize>() -> *mut u8 {
-    let buffer_size = size_of::<Channel<LocalMode, Element, N>>();
-    let layout = Layout::from_size_align(buffer_size, 128).unwrap();
-
-    let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
-    if ptr.is_null() {
-        panic!("alloc failed")
-    }
-    ptr
-}
 
 const N: usize = 1024;
 type Element = u64;
@@ -32,17 +21,8 @@ fn main() {
 }
 
 fn with_process_exclusive_mem() {
-    // Allocate buffer (process-exclusive memory)
-    let buffer = new_spsc_buffer::<Element, N>();
-
     // Create producer & consumer
-    let mut producer = unsafe {
-        Producer::<LocalMode, Element, N>::join_or_initialize_in(buffer)
-            .unwrap()
-    };
-    let mut consumer = unsafe {
-        Consumer::<LocalMode, Element, N>::join(buffer).unwrap()
-    };
+    let (mut producer, mut consumer) = headless_pair::<Element, N>();
 
     // Push & pop
     producer.push(69);

@@ -1,5 +1,5 @@
-use std::ptr::NonNull;
 use std::sync::atomic::Ordering;
+use std::{ptr::NonNull, sync::Arc};
 
 use bytemuck::AnyBitPattern;
 
@@ -34,6 +34,7 @@ impl<T: AnyBitPattern, const N: usize> Consumer<ShmemMode, T, N> {
             shmem_id,
             #[cfg(target_os = "linux")]
             page_size,
+            0,
             1,
         )
     }
@@ -46,7 +47,8 @@ impl<T: AnyBitPattern, const N: usize> Consumer<ShmemMode, T, N> {
     pub unsafe fn join_shmem_multi(
         shmem_id: &str,
         #[cfg(target_os = "linux")] page_size: PageSize,
-        interval: usize,
+        index: usize,
+        num_consumers: usize,
     ) -> Result<Consumer<ShmemMode, T, N>, QueError> {
         #[cfg(not(target_os = "linux"))]
         let page_size = PageSize::Standard;
@@ -66,20 +68,17 @@ impl<T: AnyBitPattern, const N: usize> Consumer<ShmemMode, T, N> {
             page_size,
         )?;
 
-        Consumer::join_multi(shmem.get_mut_ptr(), interval)
+        Consumer::join_multi(shmem.get_mut_ptr(), index, num_consumers)
     }
-}
 
-impl<M: ChannelMode<T>, T, const N: usize> Consumer<M, T, N> {
-    pub const MODULO_MASK: usize = N - 1;
     /// Joins an existing channel backed by `buffer`.
     ///
     /// SAFETY:
     /// This must point to a buffer of proper size and alignment.
     pub unsafe fn join(
         buffer: *mut u8,
-    ) -> Result<Consumer<M, T, N>, QueError> {
-        Self::join_multi(buffer, 1)
+    ) -> Result<Consumer<ShmemMode, T, N>, QueError> {
+        Self::join_multi(buffer, 0, 1)
     }
 
     /// Joins an existing channel backed by `buffer` as a consumer.
@@ -92,7 +91,20 @@ impl<M: ChannelMode<T>, T, const N: usize> Consumer<M, T, N> {
     /// This must point to a buffer of proper size and alignment.
     pub unsafe fn join_multi(
         buffer: *mut u8,
-        interval: usize,
+        index: usize,
+        consumers: usize,
+    ) -> Result<Consumer<ShmemMode, T, N>, QueError> {
+        Self::join_multi_(buffer, index, consumers)
+    }
+}
+
+impl<M: ChannelMode<T>, T, const N: usize> Consumer<M, T, N> {
+    pub const MODULO_MASK: usize = N - 1;
+
+    pub(crate) unsafe fn join_multi_(
+        buffer: *mut u8,
+        index: usize,
+        consumers: usize,
     ) -> Result<Consumer<M, T, N>, QueError> {
         assert!(
             N > 0 && N.is_power_of_two(),
@@ -100,8 +112,12 @@ impl<M: ChannelMode<T>, T, const N: usize> Consumer<M, T, N> {
         );
         assert!(buffer as usize % 128 == 0, "unaligned");
         assert!(
-            interval <= 64,
+            consumers <= 64,
             "interval must be less than or equal to 64"
+        );
+        assert!(
+            index < consumers,
+            "index must be less than the total number of consumers"
         );
 
         let spsc: *mut Channel<M, T, N> = buffer.cast();
@@ -118,12 +134,18 @@ impl<M: ChannelMode<T>, T, const N: usize> Consumer<M, T, N> {
             // Assume spsc is empty upon joining and set our cursor to the tail
             let head = (*spsc).tail.load(Ordering::Acquire);
 
+            if M::BACKED_BY_ARCC {
+                unsafe {
+                    Arc::increment_strong_count(spsc);
+                }
+            }
+
             // Successful join if magic and capacity is correct
             Ok(Consumer {
                 spsc: NonNull::new_unchecked(buffer.cast()),
-                head: next_modulo(head, 0, interval),
-                interval,
-                consumer_index: 0,
+                head: next_modulo(head, index, consumers),
+                interval: consumers,
+                consumer_index: index,
                 last_producer_heartbeat: (*spsc)
                     .producer_heartbeat
                     .load(Ordering::Acquire),
@@ -138,20 +160,6 @@ impl<M: ChannelMode<T>, T, const N: usize> Consumer<M, T, N> {
             Err(QueError::CorruptionDetected)
         }
     }
-
-    /// Returns `None` if consumer_index would be equal to `interval`.
-    pub fn next_multi(&self) -> Option<Consumer<M, T, N>> {
-        if self.consumer_index + 1 == self.interval {
-            None
-        } else {
-            Some(Consumer {
-                consumer_index: self.consumer_index + 1,
-                head: self.head + 1,
-                ..*self
-            })
-        }
-    }
-
     /// Attempts to read the next element. Returns `None` if the
     /// consuemr is caught up.
     pub fn pop(&mut self) -> Option<T> {
@@ -281,4 +289,13 @@ fn next_modulo(
     let head_mod = head % mod_value;
     let add_value = (target_mod + mod_value - head_mod) % mod_value;
     head + add_value
+}
+
+impl<M: ChannelMode<T>, T, const N: usize> Drop for Consumer<M, T, N> {
+    fn drop(&mut self) {
+        // LocalMode is backed by arc
+        if M::BACKED_BY_ARCC {
+            unsafe { drop(Arc::from_raw(self.spsc.as_ptr())) }
+        }
+    }
 }
