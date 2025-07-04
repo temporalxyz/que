@@ -169,4 +169,88 @@ mod tests {
 
         assert_eq!(read.join().unwrap(), metadata);
     }
+
+    #[test]
+    fn test_reserve_write_all_single_slice() {
+        let (_alloc, mut producer, mut consumer) =
+            new_spsc_pair::<u8, 16>();
+
+        let data: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8];
+
+        // Reserve and write in one contiguous slice
+        let mut reservation = producer.reserve(data.len()).unwrap();
+        reservation.write_all(data);
+        reservation.commit();
+
+        // Verify all data is readable
+        for &expected in data {
+            assert_eq!(consumer.pop(), Some(expected));
+        }
+        assert_eq!(consumer.pop(), None);
+    }
+
+    #[test]
+    fn test_reserve_write_all_wraparound() {
+        let (_alloc, mut producer, mut consumer) =
+            new_spsc_pair::<u8, 8>();
+
+        // Fill buffer near the end
+        for i in 0..6 {
+            producer.push(i).unwrap();
+        }
+        producer.sync();
+
+        // Consume first 4 elements to make space at the beginning
+        for i in 0..4 {
+            assert_eq!(consumer.pop(), Some(i));
+        }
+
+        // Now we have 2 elements at positions 4,5 and space for 6 more
+        // Writing 6 elements will use positions 6,7,0,1,2,3 (wraparound)
+        let data: &[u8] = &[10, 11, 12, 13, 14, 15];
+
+        let mut reservation = producer.reserve(data.len()).unwrap();
+        reservation.write_all(data);
+        reservation.commit();
+
+        // Read remaining old elements
+        assert_eq!(consumer.pop(), Some(4));
+        assert_eq!(consumer.pop(), Some(5));
+
+        // Read new elements (that wrapped around)
+        for &expected in data {
+            assert_eq!(consumer.pop(), Some(expected));
+        }
+        assert_eq!(consumer.pop(), None);
+    }
+
+    #[test]
+    fn test_reserve_no_capacity() {
+        let (_alloc, mut producer, mut consumer) =
+            new_spsc_pair::<u8, 4>();
+
+        // Fill the buffer completely
+        producer.push(1).unwrap();
+        producer.push(2).unwrap();
+        producer.push(3).unwrap();
+        producer.push(4).unwrap();
+
+        // Try to reserve space - should fail
+        let data: &[u8] = &[5, 6];
+        assert!(producer.reserve(data.len()).is_err());
+
+        // Consume one element to make space
+        assert_eq!(consumer.pop(), Some(1));
+
+        // Now reservation should succeed
+        let mut reservation = producer.reserve(1).unwrap();
+        reservation.write_next(5);
+        reservation.commit();
+
+        assert_eq!(consumer.pop(), Some(2));
+        assert_eq!(consumer.pop(), Some(3));
+        assert_eq!(consumer.pop(), Some(4));
+        assert_eq!(consumer.pop(), Some(5));
+        assert_eq!(consumer.pop(), None);
+    }
 }
