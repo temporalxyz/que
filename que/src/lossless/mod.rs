@@ -20,20 +20,23 @@ const fn burst_amount<const N: usize>() -> usize {
 
 #[cfg(test)]
 mod tests {
-    use bytemuck::AnyBitPattern;
     use consumer::Consumer;
     use producer::Producer;
 
     use super::*;
-    use crate::test_utils::{new_spsc_buffer, Alloc};
+    use crate::{
+        utils::{new_spsc_buffer, Alloc},
+        LocalMode,
+    };
 
     use std::{
         ptr::NonNull,
         sync::atomic::{AtomicU64, Ordering},
     };
 
-    pub(crate) fn new_spsc_pair<T: AnyBitPattern, const N: usize>(
-    ) -> (Alloc, Producer<T, N>, Consumer<T, N>) {
+    pub(crate) fn new_spsc_pair<T: Send, const N: usize>(
+    ) -> (Alloc, Producer<LocalMode, T, N>, Consumer<LocalMode, T, N>)
+    {
         let alloc = new_spsc_buffer::<T, N>();
 
         let producer =
@@ -48,8 +51,8 @@ mod tests {
         let (_alloc, mut producer, mut consumer) =
             new_spsc_pair::<u64, 16>();
 
-        producer.push(&69).unwrap();
-        producer.push(&70).unwrap();
+        producer.push(69).unwrap();
+        producer.push(70).unwrap();
         assert_eq!(consumer.pop(), None);
 
         producer.sync();
@@ -62,11 +65,11 @@ mod tests {
         let (_alloc, mut producer, mut consumer) =
             new_spsc_pair::<u64, 4>();
 
-        assert!(producer.push(&69).is_ok());
-        assert!(producer.push(&70).is_ok());
-        assert!(producer.push(&71).is_ok());
-        assert!(producer.push(&72).is_ok());
-        assert!(producer.push(&73).is_err());
+        assert!(producer.push(69).is_ok());
+        assert!(producer.push(70).is_ok());
+        assert!(producer.push(71).is_ok());
+        assert!(producer.push(72).is_ok());
+        assert!(producer.push(73).is_err());
 
         assert_eq!(consumer.pop(), Some(69));
         assert_eq!(consumer.pop(), Some(70));
@@ -74,26 +77,27 @@ mod tests {
         assert_eq!(consumer.pop(), Some(72));
 
         // This should now succeed, along with next read
-        assert!(producer.push(&73).is_ok());
+        assert!(producer.push(73).is_ok());
         assert_eq!(consumer.pop(), Some(73));
     }
 
     #[test]
     fn test_restart_producer() {
         let alloc = new_spsc_buffer::<u64, 16>();
-        let mut producer: Producer<u64, 16> =
+        let mut producer: Producer<LocalMode, u64, 16> =
             unsafe { Producer::initialize_in(alloc.ptr).unwrap() };
-        let mut consumer: Consumer<u64, 16> =
+        let mut consumer: Consumer<LocalMode, u64, 16> =
             unsafe { Consumer::join(alloc.ptr).unwrap() };
 
-        producer.push(&69).unwrap();
-        producer.push(&70).unwrap();
+        producer.push(69).unwrap();
+        producer.push(70).unwrap();
         producer.sync();
         drop(producer);
 
         // Restart producer, last values should be kept
-        let mut producer =
-            unsafe { Producer::<u64, 16>::join(alloc.ptr).unwrap() };
+        let mut producer = unsafe {
+            Producer::<LocalMode, u64, 16>::join(alloc.ptr).unwrap()
+        };
 
         assert_eq!(consumer.pop(), Some(69));
 
@@ -101,7 +105,7 @@ mod tests {
         assert_eq!(consumer.pop(), Some(70));
 
         // Push
-        producer.push(&71).unwrap();
+        producer.push(71).unwrap();
         assert_eq!(consumer.pop(), None);
 
         // Publish
@@ -112,11 +116,11 @@ mod tests {
     #[test]
     fn test_detect_offline_consumer() {
         let alloc = new_spsc_buffer::<u64, 4>();
-        let mut producer: Producer<u64, 4> =
+        let mut producer: Producer<LocalMode, u64, 4> =
             unsafe { Producer::initialize_in(alloc.ptr).unwrap() };
         assert!(!producer.consumer_heartbeat());
 
-        let consumer: Consumer<u64, 4> =
+        let consumer: Consumer<LocalMode, u64, 4> =
             unsafe { Consumer::join(alloc.ptr).unwrap() };
         consumer.beat();
         assert!(producer.consumer_heartbeat());
@@ -131,14 +135,14 @@ mod tests {
 
         let alloc = new_spsc_buffer::<u64, 4>();
         let buffer = SendPtr(NonNull::new(alloc.ptr).unwrap());
-        let producer: Producer<u64, 4> = unsafe {
+        let producer: Producer<LocalMode, u64, 4> = unsafe {
             Producer::initialize_in(buffer.0.as_ptr()).unwrap()
         };
 
         // Start up thread to read metadata
         let read = std::thread::spawn(move || {
             let buffer = buffer;
-            let consumer: Consumer<u64, 4> =
+            let consumer: Consumer<LocalMode, u64, 4> =
                 unsafe { Consumer::join(buffer.0.as_ptr()).unwrap() };
             let metadata: &AtomicU64 = unsafe {
                 &*consumer

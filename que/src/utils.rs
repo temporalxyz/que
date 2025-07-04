@@ -1,12 +1,8 @@
-//! Need 128 byte aligned allocs for tests
-
 use std::alloc::Layout;
 
-use bytemuck::AnyBitPattern;
+use crate::{Channel, LocalMode};
 
-use crate::Channel;
-
-pub(crate) struct Alloc {
+pub struct Alloc {
     pub ptr: *mut u8,
     pub layout: Layout,
 }
@@ -31,8 +27,8 @@ impl Drop for Alloc {
     }
 }
 
-pub(crate) fn new_spsc_buffer<T: AnyBitPattern, const N: usize>(
-) -> Alloc {
-    let buffer_size = std::mem::size_of::<Channel<T, N>>();
-    Alloc::new(buffer_size, 128)
+pub(crate) fn new_spsc_buffer<T, const N: usize>() -> Alloc {
+    let buffer_align = std::mem::align_of::<Channel<LocalMode, T, N>>();
+    let buffer_size = std::mem::size_of::<Channel<LocalMode, T, N>>();
+    Alloc::new(buffer_size, buffer_align)
 }

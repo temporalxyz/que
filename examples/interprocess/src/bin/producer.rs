@@ -1,17 +1,18 @@
 use que::{
     headless_spmc::producer::Producer, page_size::PageSize,
-    shmem::cleanup_shmem, Channel,
+    shmem::cleanup_shmem, Channel, ShmemMode,
 };
 
 const N: usize = 4;
 type Element = u64;
-const SPSC_SIZE: usize = core::mem::size_of::<Channel<Element, N>>();
+const SPSC_SIZE: usize =
+    core::mem::size_of::<Channel<ShmemMode, Element, N>>();
 
 fn main() {
     // Initialize or join as producer
     let page_size = PageSize::Standard;
     let mut producer = unsafe {
-        Producer::<Element, N>::join_or_create_shmem(
+        Producer::<ShmemMode, Element, N>::join_or_create_shmem(
             "shmem",
             #[cfg(target_os = "linux")]
             page_size,
@@ -25,7 +26,7 @@ fn main() {
 
     // Push and publish
     let value = 42;
-    producer.push(&value);
+    producer.push(value);
     producer.sync();
     println!("published value");
 

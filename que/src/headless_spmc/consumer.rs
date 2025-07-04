@@ -5,30 +5,31 @@ use bytemuck::AnyBitPattern;
 
 use crate::{
     error::QueError, headless_spmc::MAGIC, page_size::PageSize,
-    shmem::Shmem,
+    shmem::Shmem, ChannelMode, ShmemMode,
 };
 
 use super::{burst_amount, Channel};
 
-unsafe impl<T, const N: usize> Send for Consumer<T, N> {}
+unsafe impl<M: ChannelMode<T>, T, const N: usize> Send
+    for Consumer<M, T, N>
+{
+}
 
 #[repr(C)]
-pub struct Consumer<T, const N: usize> {
-    spsc: NonNull<Channel<T, N>>,
+pub struct Consumer<M: ChannelMode<T>, T, const N: usize> {
+    spsc: NonNull<Channel<M, T, N>>,
     head: usize,
     interval: usize,
     consumer_index: usize,
     last_producer_heartbeat: usize,
 }
 
-impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
-    const MODULO_MASK: usize = N - 1;
-
+impl<T: AnyBitPattern, const N: usize> Consumer<ShmemMode, T, N> {
     /// Joins an existing channel back by shared memory as a consumer.
     pub unsafe fn join_shmem(
         shmem_id: &str,
         #[cfg(target_os = "linux")] page_size: PageSize,
-    ) -> Result<Consumer<T, N>, QueError> {
+    ) -> Result<Consumer<ShmemMode, T, N>, QueError> {
         Self::join_shmem_multi(
             shmem_id,
             #[cfg(target_os = "linux")]
@@ -46,14 +47,14 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
         shmem_id: &str,
         #[cfg(target_os = "linux")] page_size: PageSize,
         interval: usize,
-    ) -> Result<Consumer<T, N>, QueError> {
+    ) -> Result<Consumer<ShmemMode, T, N>, QueError> {
         #[cfg(not(target_os = "linux"))]
         let page_size = PageSize::Standard;
 
         // Calculate buffer size.
         // If using huge pages, we must uplign to page size.
         let buffer_size: i64 = page_size
-            .mem_size(core::mem::size_of::<Channel<T, N>>())
+            .mem_size(core::mem::size_of::<Channel<ShmemMode, T, N>>())
             .try_into()
             .map_err(|_| QueError::InvalidSize)?;
 
@@ -67,14 +68,17 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
 
         Consumer::join_multi(shmem.get_mut_ptr(), interval)
     }
+}
 
+impl<M: ChannelMode<T>, T, const N: usize> Consumer<M, T, N> {
+    pub const MODULO_MASK: usize = N - 1;
     /// Joins an existing channel backed by `buffer`.
     ///
     /// SAFETY:
     /// This must point to a buffer of proper size and alignment.
     pub unsafe fn join(
         buffer: *mut u8,
-    ) -> Result<Consumer<T, N>, QueError> {
+    ) -> Result<Consumer<M, T, N>, QueError> {
         Self::join_multi(buffer, 1)
     }
 
@@ -89,7 +93,7 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
     pub unsafe fn join_multi(
         buffer: *mut u8,
         interval: usize,
-    ) -> Result<Consumer<T, N>, QueError> {
+    ) -> Result<Consumer<M, T, N>, QueError> {
         assert!(
             N > 0 && N.is_power_of_two(),
             "Capacity must be a power of two"
@@ -100,33 +104,19 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
             "interval must be less than or equal to 64"
         );
 
-        // Zerocopy deserialize the SPSC
-        let spsc: &Channel<T, N> = &*buffer.cast();
+        let spsc: *mut Channel<M, T, N> = buffer.cast();
 
         // Check magic
-        let magic = spsc.magic.load(Ordering::Acquire);
-        let capacity = spsc.capacity.load(Ordering::Acquire);
+        let magic = (*spsc).magic.load(Ordering::Acquire);
+        let capacity = (*spsc).capacity.load(Ordering::Acquire);
         if magic == MAGIC {
             // Check capacity
             if capacity != N {
                 return Err(QueError::IncorrectCapacity(capacity));
             }
 
-            // Initialize
-            let Channel {
-                tail,
-                head: _, // not used in headless mode
-                capacity: _,
-                producer_heartbeat: _,
-                consumer_heartbeat,
-                magic: _,
-                buffer: _unused,
-                padding: _,
-            } = spsc;
-
-            // Assume spsc is empty upon joining
-            let head = tail.load(Ordering::Acquire);
-            consumer_heartbeat.fetch_add(1, Ordering::Release);
+            // Assume spsc is empty upon joining and set our cursor to the tail
+            let head = (*spsc).tail.load(Ordering::Acquire);
 
             // Successful join if magic and capacity is correct
             Ok(Consumer {
@@ -134,7 +124,7 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
                 head: next_modulo(head, 0, interval),
                 interval,
                 consumer_index: 0,
-                last_producer_heartbeat: spsc
+                last_producer_heartbeat: (*spsc)
                     .producer_heartbeat
                     .load(Ordering::Acquire),
             })
@@ -150,7 +140,7 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
     }
 
     /// Returns `None` if consumer_index would be equal to `interval`.
-    pub fn next_multi(&self) -> Option<Consumer<T, N>> {
+    pub fn next_multi(&self) -> Option<Consumer<M, T, N>> {
         if self.consumer_index + 1 == self.interval {
             None
         } else {
@@ -197,10 +187,12 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
             // Optimistically read value and then check if valid
             let head_index = self.head & Self::MODULO_MASK;
             let value = unsafe {
-                *(*self.spsc.as_ptr())
-                    .buffer
-                    .as_ptr()
-                    .add(head_index)
+                core::ptr::read(
+                    (*self.spsc.as_ptr())
+                        .buffer
+                        .as_ptr()
+                        .add(head_index),
+                )
             };
 
             // Check if still not overrun

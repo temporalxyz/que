@@ -4,37 +4,39 @@ use std::sync::atomic::Ordering;
 use bytemuck::AnyBitPattern;
 
 use crate::{
-    error::QueError, page_size::PageSize, shmem::Shmem, MAGIC,
+    error::QueError, page_size::PageSize, shmem::Shmem, ChannelMode,
+    ShmemMode, MAGIC,
 };
 
 use super::{burst_amount, Channel};
 
-unsafe impl<T, const N: usize> Send for Consumer<T, N> {}
+unsafe impl<M: ChannelMode<T>, T, const N: usize> Send
+    for Consumer<M, T, N>
+{
+}
 
 #[repr(C)]
-pub struct Consumer<T, const N: usize> {
-    spsc: NonNull<Channel<T, N>>,
+pub struct Consumer<M: ChannelMode<T>, T, const N: usize> {
+    spsc: NonNull<Channel<M, T, N>>,
     head: usize,
     items_since_last_sync: usize,
     consumer_index: usize,
     last_producer_heartbeat: usize,
 }
 
-impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
-    const MODULO_MASK: usize = N - 1;
-
+impl<T: AnyBitPattern, const N: usize> Consumer<ShmemMode, T, N> {
     /// Joins an existing channel back by shared memory as a consumer.
     pub unsafe fn join_shmem(
         shmem_id: &str,
         #[cfg(target_os = "linux")] page_size: PageSize,
-    ) -> Result<Consumer<T, N>, QueError> {
+    ) -> Result<Consumer<ShmemMode, T, N>, QueError> {
         #[cfg(not(target_os = "linux"))]
         let page_size = PageSize::Standard;
 
         // Calculate buffer size.
         // If using huge pages, we must uplign to page size.
         let buffer_size: i64 = page_size
-            .mem_size(core::mem::size_of::<Channel<T, N>>())
+            .mem_size(core::mem::size_of::<Channel<ShmemMode, T, N>>())
             .try_into()
             .map_err(|_| QueError::InvalidSize)?;
 
@@ -48,7 +50,10 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
 
         unsafe { Consumer::join(shmem.get_mut_ptr()) }
     }
+}
 
+impl<M: ChannelMode<T>, T, const N: usize> Consumer<M, T, N> {
+    const MODULO_MASK: usize = N - 1;
     /// Joins an existing channel backed by `buffer`.
     ///
     ///
@@ -56,7 +61,7 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
     /// This must point to a buffer of proper size and alignment.
     pub unsafe fn join(
         buffer: *mut u8,
-    ) -> Result<Consumer<T, N>, QueError> {
+    ) -> Result<Consumer<M, T, N>, QueError> {
         let buffer = buffer;
         assert!(
             N > 0 && N.is_power_of_two(),
@@ -65,7 +70,7 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
         assert!(buffer as usize % 128 == 0, "unaligned");
 
         // Zerocopy deserialize the SPSC
-        let spsc: *const Channel<T, N> = buffer.cast();
+        let spsc: *const Channel<M, T, N> = buffer.cast();
 
         // Check magic
         let magic = (*spsc).magic.load(Ordering::Acquire);
@@ -108,10 +113,12 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
         // Optimistically read value and then check if valid
         let head_index = self.head & Self::MODULO_MASK;
         let value = unsafe {
-            *(*self.spsc.as_ptr())
-                .buffer
-                .as_ptr()
-                .add(head_index)
+            core::ptr::read(
+                (*self.spsc.as_ptr())
+                    .buffer
+                    .as_ptr()
+                    .add(head_index),
+            )
         };
 
         // Check if valid
@@ -183,10 +190,11 @@ impl<T: AnyBitPattern, const N: usize> Consumer<T, N> {
     }
 
     #[inline(always)]
-    fn maybe_sync(&self) {
+    fn maybe_sync(&mut self) {
         let do_sync = self.items_since_last_sync >= burst_amount::<N>();
 
         if do_sync {
+            self.items_since_last_sync = 0;
             unsafe {
                 (*self.spsc.as_ptr())
                     .head

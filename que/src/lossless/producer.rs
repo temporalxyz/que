@@ -4,36 +4,40 @@ use std::sync::atomic::Ordering;
 use bytemuck::AnyBitPattern;
 
 use crate::{
-    error::QueError, page_size::PageSize, shmem::Shmem, MAGIC,
+    error::QueError, page_size::PageSize, shmem::Shmem, ChannelMode,
+    ShmemMode, MAGIC,
 };
 
 use super::{burst_amount, Channel};
 
 #[repr(C, align(128))]
-pub struct Producer<T, const N: usize> {
-    spsc: NonNull<Channel<T, N>>,
+pub struct Producer<M: ChannelMode<T>, T, const N: usize> {
+    spsc: NonNull<Channel<M, T, N>>,
     tail: usize,
     /// Number of elements written since last sync
     written: usize,
     last_consumer_heartbeat: usize,
 }
 
-unsafe impl<T, const N: usize> Send for Producer<T, N> {}
+unsafe impl<M: ChannelMode<T>, T, const N: usize> Send
+    for Producer<M, T, N>
+{
+}
 
-impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
+impl<T: AnyBitPattern, const N: usize> Producer<ShmemMode, T, N> {
     /// Joins or creates a channel backed by shared memory as a
     /// producer.
     pub unsafe fn join_or_create_shmem(
         shmem_id: &str,
         #[cfg(target_os = "linux")] page_size: PageSize,
-    ) -> Result<Producer<T, N>, QueError> {
+    ) -> Result<Producer<ShmemMode, T, N>, QueError> {
         #[cfg(not(target_os = "linux"))]
         let page_size = PageSize::Standard;
 
         // Calculate buffer size.
         // If using huge pages, we must uplign to page size.
         let buffer_size: i64 = page_size
-            .mem_size(core::mem::size_of::<Channel<T, N>>())
+            .mem_size(core::mem::size_of::<Channel<ShmemMode, T, N>>())
             .try_into()
             .map_err(|_| QueError::InvalidSize)?;
 
@@ -46,13 +50,14 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         )?;
 
         // Zerocopy deserialize the SPSC
-        let spsc: &Channel<T, N> =
-            unsafe { &*shmem.get_mut_ptr().cast() };
+        let spsc: *mut Channel<ShmemMode, T, N> =
+            shmem.get_mut_ptr().cast();
 
         // Check magic
-        let magic = spsc.magic.load(Ordering::Acquire);
-        let capacity = spsc.capacity.load(Ordering::Acquire);
-        if magic == MAGIC {
+        let magic = (*spsc).magic.load(Ordering::Acquire);
+        let capacity = (*spsc).capacity.load(Ordering::Acquire);
+        #[rustfmt::skip]
+        return if magic == MAGIC {
             // Check capacity
             if capacity != N {
                 return Err(QueError::IncorrectCapacity(capacity));
@@ -61,44 +66,35 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
             // Successful join if magic and capacity is correct
             Ok(Producer {
                 spsc: NonNull::new(shmem.get_mut_ptr().cast()).unwrap(),
-                tail: spsc.tail.load(Ordering::Acquire),
+                tail: (*spsc).tail.load(Ordering::Acquire),
                 written: 0,
-                last_consumer_heartbeat: spsc
+                last_consumer_heartbeat: (*spsc)
                     .consumer_heartbeat
                     .load(Ordering::Acquire),
             })
         } else if magic == 0 {
-            // Initialize
-            let Channel {
-                tail,
-                // consumer will set this
-                head: _,
-                capacity,
-                producer_heartbeat,
-                consumer_heartbeat: _,
-                magic,
-                buffer: _unused,
-                padding: _,
-            } = spsc;
-
-            tail.store(0, Ordering::Release);
-            producer_heartbeat.store(0, Ordering::Release);
-            capacity.store(N, Ordering::Release);
-            magic.store(MAGIC, Ordering::Release);
+            (*spsc).tail.store(0, Ordering::Release);
+            (*spsc).producer_heartbeat.store(0, Ordering::Release);
+            (*spsc).capacity.store(N, Ordering::Release);
+            (*spsc).magic.store(MAGIC, Ordering::Release);
 
             Ok(Producer {
                 spsc: NonNull::new(shmem.get_mut_ptr().cast()).unwrap(),
                 tail: 0,
                 written: 0,
-                last_consumer_heartbeat: spsc
+                last_consumer_heartbeat: (*spsc)
                     .consumer_heartbeat
                     .load(Ordering::Acquire),
             })
         } else {
             // Magic is not MAGIC and not zero
             Err(QueError::CorruptionDetected)
-        }
+        };
     }
+}
+
+impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
+    pub const MODULO_MASK: usize = N - 1;
 
     /// Initializes a channel backed by `buffer` and joins as a
     /// producer.
@@ -107,7 +103,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
     /// This must point to a buffer of proper size and alignment.
     pub unsafe fn initialize_in(
         buffer: *mut u8,
-    ) -> Result<Producer<T, N>, QueError> {
+    ) -> Result<Producer<M, T, N>, QueError> {
         assert!(
             N > 0 && N.is_power_of_two(),
             "Capacity must be a power of two"
@@ -115,60 +111,49 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         assert!(buffer as usize % 128 == 0, "unaligned");
 
         // Zerocopy deserialize the SPSC
-        let spsc: &Channel<T, N> = &*buffer.cast();
+        let spsc: *mut Channel<M, T, N> = buffer.cast();
 
         // Check magic
-        let magic = spsc.magic.load(Ordering::Acquire);
-        let capacity = spsc.capacity.load(Ordering::Acquire);
-        if magic == MAGIC {
+        let magic = (*spsc).magic.load(Ordering::Acquire);
+        let capacity = (*spsc).capacity.load(Ordering::Acquire);
+        #[rustfmt::skip]
+        return if magic == MAGIC {
             // Check capacity
             if capacity != N {
                 return Err(QueError::IncorrectCapacity(capacity));
             }
 
-            spsc.producer_heartbeat
+            (*spsc)
+                .producer_heartbeat
                 .fetch_add(1, Ordering::Release);
 
             // Successful join if magic and capacity is correct
             Ok(Producer {
                 spsc: NonNull::new(buffer.cast()).unwrap(),
-                tail: spsc.tail.load(Ordering::Acquire),
+                tail: (*spsc).tail.load(Ordering::Acquire),
                 written: 0,
-                last_consumer_heartbeat: spsc
+                last_consumer_heartbeat: (*spsc)
                     .consumer_heartbeat
                     .load(Ordering::Acquire),
             })
         } else if magic == 0 {
-            // Initialize
-            let Channel {
-                tail,
-                // consumer will set this
-                head: _,
-                capacity,
-                producer_heartbeat,
-                consumer_heartbeat: _,
-                magic,
-                buffer: _unused,
-                padding: _,
-            } = spsc;
-
-            tail.store(0, Ordering::Release);
-            producer_heartbeat.store(0, Ordering::Release);
-            capacity.store(N, Ordering::Release);
-            magic.store(MAGIC, Ordering::Release);
+            (*spsc).tail.store(0, Ordering::Release);
+            (*spsc).producer_heartbeat.store(0, Ordering::Release);
+            (*spsc).capacity.store(N, Ordering::Release);
+            (*spsc).magic.store(MAGIC, Ordering::Release);
 
             Ok(Producer {
                 spsc: NonNull::new(buffer.cast()).unwrap(),
                 tail: 0,
                 written: 0,
-                last_consumer_heartbeat: spsc
+                last_consumer_heartbeat: (*spsc)
                     .consumer_heartbeat
                     .load(Ordering::Acquire),
             })
         } else {
             // Magic is not MAGIC and not zero
             Err(QueError::CorruptionDetected)
-        }
+        };
     }
 
     /// Joins an existing channel backed by `buffer` as a producer.
@@ -177,7 +162,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
     /// This must point to a buffer of proper size and alignment.
     pub unsafe fn join(
         buffer: *mut u8,
-    ) -> Result<Producer<T, N>, QueError> {
+    ) -> Result<Producer<M, T, N>, QueError> {
         assert!(
             N > 0 && N.is_power_of_two(),
             "Capacity must be a power of two"
@@ -185,7 +170,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         assert!(buffer as usize % 128 == 0, "unaligned");
 
         // Zerocopy deserialize the SPSC
-        let spsc: &Channel<T, N> = &*buffer.cast();
+        let spsc: &Channel<M, T, N> = &*buffer.cast();
 
         let magic = spsc.magic.load(Ordering::Acquire);
         let capacity = spsc.capacity.load(Ordering::Acquire);
@@ -216,7 +201,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
     /// Attempts to write a new element to the channel. If full, returns
     /// [QueError::Full].
     #[inline(always)]
-    pub fn push(&mut self, value: &T) -> Result<(), QueError> {
+    pub fn push(&mut self, value: T) -> Result<(), QueError> {
         // Check if full
         let is_full = self.tail
             == unsafe {
@@ -229,12 +214,12 @@ impl<T: AnyBitPattern, const N: usize> Producer<T, N> {
         }
 
         // Write value if not full
-        let index = self.tail & (N - 1);
+        let index = self.tail & Self::MODULO_MASK;
         unsafe {
             *(*self.spsc.as_ptr())
                 .buffer
                 .as_mut_ptr()
-                .add(index) = *value;
+                .add(index) = value;
         };
 
         // Increment tail and written counter

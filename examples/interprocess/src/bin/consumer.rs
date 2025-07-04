@@ -1,4 +1,4 @@
-use que::headless_spmc::consumer::Consumer;
+use que::{headless_spmc::consumer::Consumer, ShmemMode};
 
 #[cfg(target_os = "linux")]
 use que::page_size::PageSize;
@@ -11,15 +11,15 @@ fn main() {
     #[cfg(target_os = "linux")]
     let page_size = PageSize::Standard;
     const SPSC_SIZE: usize =
-        core::mem::size_of::<que::Channel<Element, N>>();
+        core::mem::size_of::<que::Channel<ShmemMode, Element, N>>();
     println!("spsc has size {SPSC_SIZE}");
     println!(
         "Size of SPSC struct without buffer: {}",
-        std::mem::size_of::<que::Channel<(), 0>>()
+        std::mem::size_of::<que::Channel<ShmemMode, (), 0>>()
     );
 
     let mut consumer = unsafe {
-        Consumer::<Element, N>::join_shmem(
+        Consumer::<ShmemMode, Element, N>::join_shmem(
             "shmem",
             #[cfg(target_os = "linux")]
             page_size,
