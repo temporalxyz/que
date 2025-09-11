@@ -1,9 +1,12 @@
-//! TODO: audit
-
 pub mod consumer;
 pub mod producer;
 
-use crate::Channel;
+use std::{mem::MaybeUninit, sync::Arc};
+
+use crate::{
+    lossless::{consumer::Consumer, producer::Producer},
+    Channel, LocalMode,
+};
 
 const fn burst_amount<const N: usize>() -> usize {
     // Producer can write up to 1/4 of the buffer at a time
@@ -18,38 +21,43 @@ const fn burst_amount<const N: usize>() -> usize {
     }
 }
 
+pub fn lossless_pair<T: Send, const N: usize>(
+) -> (Producer<LocalMode, T, N>, Consumer<LocalMode, T, N>) {
+    let arc_uninit = Arc::<Channel<LocalMode, T, N>>::new_uninit();
+    let ptr: *mut MaybeUninit<Channel<LocalMode, T, N>> =
+        Arc::into_raw(arc_uninit).cast_mut();
+
+    unsafe {
+        *ptr = core::mem::zeroed();
+    }
+
+    let producer = unsafe {
+        Producer::join_or_initialize_in_(ptr.cast()).unwrap()
+    };
+    let consumer = unsafe { Consumer::join(ptr.cast()).unwrap() };
+
+    unsafe {
+        Arc::decrement_strong_count(ptr);
+    }
+
+    (producer, consumer)
+}
+
 #[cfg(test)]
 mod tests {
-    use consumer::Consumer;
     use producer::Producer;
 
     use super::*;
-    use crate::{
-        utils::{new_spsc_buffer, Alloc},
-        LocalMode,
-    };
+    use crate::LocalMode;
 
     use std::{
         ptr::NonNull,
         sync::atomic::{AtomicU64, Ordering},
     };
 
-    pub(crate) fn new_spsc_pair<T: Send, const N: usize>(
-    ) -> (Alloc, Producer<LocalMode, T, N>, Consumer<LocalMode, T, N>)
-    {
-        let alloc = new_spsc_buffer::<T, N>();
-
-        let producer =
-            unsafe { Producer::initialize_in(alloc.ptr).unwrap() };
-        let consumer = unsafe { Consumer::join(alloc.ptr).unwrap() };
-
-        (alloc, producer, consumer)
-    }
-
     #[test]
     fn test_push_pop_multiple() {
-        let (_alloc, mut producer, mut consumer) =
-            new_spsc_pair::<u64, 16>();
+        let (mut producer, mut consumer) = lossless_pair::<u64, 16>();
 
         producer.push(69).unwrap();
         producer.push(70).unwrap();
@@ -62,8 +70,7 @@ mod tests {
 
     #[test]
     fn test_push_pop_overrun() {
-        let (_alloc, mut producer, mut consumer) =
-            new_spsc_pair::<u64, 4>();
+        let (mut producer, mut consumer) = lossless_pair::<u64, 4>();
 
         assert!(producer.push(69).is_ok());
         assert!(producer.push(70).is_ok());
@@ -83,29 +90,29 @@ mod tests {
 
     #[test]
     fn test_restart_producer() {
-        let alloc = new_spsc_buffer::<u64, 16>();
-        let mut producer: Producer<LocalMode, u64, 16> =
-            unsafe { Producer::initialize_in(alloc.ptr).unwrap() };
-        let mut consumer: Consumer<LocalMode, u64, 16> =
-            unsafe { Consumer::join(alloc.ptr).unwrap() };
+        let (mut producer, mut consumer) = lossless_pair::<u64, 16>();
 
         producer.push(69).unwrap();
         producer.push(70).unwrap();
         producer.sync();
+        let spsc_ptr = &raw mut producer;
         drop(producer);
 
         // Restart producer, last values should be kept
         let mut producer = unsafe {
-            Producer::<LocalMode, u64, 16>::join(alloc.ptr).unwrap()
+            Producer::<LocalMode, u64, 16>::join_(
+                *spsc_ptr.cast::<*mut u8>(),
+            )
+            .unwrap()
         };
 
         assert_eq!(consumer.pop(), Some(69));
-
-        // No value published until sync
         assert_eq!(consumer.pop(), Some(70));
 
         // Push
         producer.push(71).unwrap();
+
+        // No value published until sync
         assert_eq!(consumer.pop(), None);
 
         // Publish
@@ -115,13 +122,9 @@ mod tests {
 
     #[test]
     fn test_detect_offline_consumer() {
-        let alloc = new_spsc_buffer::<u64, 4>();
-        let mut producer: Producer<LocalMode, u64, 4> =
-            unsafe { Producer::initialize_in(alloc.ptr).unwrap() };
+        let (mut producer, consumer) = lossless_pair::<u64, 4>();
         assert!(!producer.consumer_heartbeat());
 
-        let consumer: Consumer<LocalMode, u64, 4> =
-            unsafe { Consumer::join(alloc.ptr).unwrap() };
         consumer.beat();
         assert!(producer.consumer_heartbeat());
 
@@ -130,20 +133,10 @@ mod tests {
 
     #[test]
     fn test_synchronized_metadata() {
-        struct SendPtr(NonNull<u8>);
-        unsafe impl Send for SendPtr {}
-
-        let alloc = new_spsc_buffer::<u64, 4>();
-        let buffer = SendPtr(NonNull::new(alloc.ptr).unwrap());
-        let producer: Producer<LocalMode, u64, 4> = unsafe {
-            Producer::initialize_in(buffer.0.as_ptr()).unwrap()
-        };
+        let (producer, consumer) = lossless_pair::<u64, 4>();
 
         // Start up thread to read metadata
         let read = std::thread::spawn(move || {
-            let buffer = buffer;
-            let consumer: Consumer<LocalMode, u64, 4> =
-                unsafe { Consumer::join(buffer.0.as_ptr()).unwrap() };
             let metadata: &AtomicU64 = unsafe {
                 &*consumer
                     .get_padding_ptr()
@@ -172,8 +165,7 @@ mod tests {
 
     #[test]
     fn test_reserve_write_all_single_slice() {
-        let (_alloc, mut producer, mut consumer) =
-            new_spsc_pair::<u8, 16>();
+        let (mut producer, mut consumer) = lossless_pair::<u8, 8>();
 
         let data: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8];
 
@@ -191,8 +183,7 @@ mod tests {
 
     #[test]
     fn test_reserve_write_all_wraparound() {
-        let (_alloc, mut producer, mut consumer) =
-            new_spsc_pair::<u8, 8>();
+        let (mut producer, mut consumer) = lossless_pair::<u8, 8>();
 
         // Fill buffer near the end
         for i in 0..6 {
@@ -226,8 +217,7 @@ mod tests {
 
     #[test]
     fn test_reserve_no_capacity() {
-        let (_alloc, mut producer, mut consumer) =
-            new_spsc_pair::<u8, 4>();
+        let (mut producer, mut consumer) = lossless_pair::<u8, 4>();
 
         // Fill the buffer completely
         producer.push(1).unwrap();

@@ -1,5 +1,5 @@
-use std::ptr::NonNull;
 use std::sync::atomic::Ordering;
+use std::{ptr::NonNull, sync::Arc};
 
 use bytemuck::AnyBitPattern;
 
@@ -75,6 +75,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<ShmemMode, T, N> {
         } else if magic == 0 {
             (*spsc).tail.store(0, Ordering::Release);
             (*spsc).producer_heartbeat.store(0, Ordering::Release);
+            (*spsc).consumer_heartbeat.store(0, Ordering::Release);
             (*spsc).capacity.store(N, Ordering::Release);
             (*spsc).magic.store(MAGIC, Ordering::Release);
 
@@ -91,17 +92,33 @@ impl<T: AnyBitPattern, const N: usize> Producer<ShmemMode, T, N> {
             Err(QueError::CorruptionDetected)
         };
     }
-}
-
-impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
-    pub const MODULO_MASK: usize = N - 1;
 
     /// Initializes a channel backed by `buffer` and joins as a
     /// producer.
     ///
     /// SAFETY:
     /// This must point to a buffer of proper size and alignment.
-    pub unsafe fn initialize_in(
+    pub unsafe fn join_or_initialize_in(
+        buffer: *mut u8,
+    ) -> Result<Producer<ShmemMode, T, N>, QueError> {
+        Self::join_or_initialize_in_(buffer)
+    }
+
+    /// Joins an existing channel backed by `buffer` as a producer.
+    ///
+    /// SAFETY:
+    /// This must point to a buffer of proper size and alignment.
+    pub unsafe fn join(
+        buffer: *mut u8,
+    ) -> Result<Producer<ShmemMode, T, N>, QueError> {
+        Self::join_(buffer)
+    }
+}
+
+impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
+    pub const MODULO_MASK: usize = N - 1;
+
+    pub(crate) unsafe fn join_or_initialize_in_(
         buffer: *mut u8,
     ) -> Result<Producer<M, T, N>, QueError> {
         assert!(
@@ -127,6 +144,12 @@ impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
                 .producer_heartbeat
                 .fetch_add(1, Ordering::Release);
 
+            if M::BACKED_BY_ARCC {
+                unsafe {
+                    Arc::increment_strong_count(spsc);
+                }
+            }
+
             // Successful join if magic and capacity is correct
             Ok(Producer {
                 spsc: NonNull::new(buffer.cast()).unwrap(),
@@ -138,9 +161,16 @@ impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
             })
         } else if magic == 0 {
             (*spsc).tail.store(0, Ordering::Release);
+            (*spsc).consumer_heartbeat.store(0, Ordering::Release);
             (*spsc).producer_heartbeat.store(0, Ordering::Release);
             (*spsc).capacity.store(N, Ordering::Release);
             (*spsc).magic.store(MAGIC, Ordering::Release);
+
+            if M::BACKED_BY_ARCC {
+                unsafe {
+                    Arc::increment_strong_count(spsc);
+                }
+            }
 
             Ok(Producer {
                 spsc: NonNull::new(buffer.cast()).unwrap(),
@@ -156,11 +186,7 @@ impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
         };
     }
 
-    /// Joins an existing channel backed by `buffer` as a producer.
-    ///
-    /// SAFETY:
-    /// This must point to a buffer of proper size and alignment.
-    pub unsafe fn join(
+    pub(crate) unsafe fn join_(
         buffer: *mut u8,
     ) -> Result<Producer<M, T, N>, QueError> {
         assert!(
@@ -170,21 +196,27 @@ impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
         assert!(buffer as usize % 128 == 0, "unaligned");
 
         // Zerocopy deserialize the SPSC
-        let spsc: &Channel<M, T, N> = &*buffer.cast();
+        let spsc: *mut Channel<M, T, N> = buffer.cast();
 
-        let magic = spsc.magic.load(Ordering::Acquire);
-        let capacity = spsc.capacity.load(Ordering::Acquire);
+        let magic = (*spsc).magic.load(Ordering::Acquire);
+        let capacity = (*spsc).capacity.load(Ordering::Acquire);
         if magic == MAGIC {
             if capacity != N {
                 return Err(QueError::IncorrectCapacity(capacity));
             }
 
+            if M::BACKED_BY_ARCC {
+                unsafe {
+                    Arc::increment_strong_count(spsc);
+                }
+            }
+
             // Successful join if magic and capacity is correct
             Ok(Producer {
                 spsc: NonNull::new(buffer.cast()).unwrap(),
-                tail: spsc.tail.load(Ordering::Acquire),
+                tail: (*spsc).tail.load(Ordering::Acquire),
                 written: 0,
-                last_consumer_heartbeat: spsc
+                last_consumer_heartbeat: (*spsc)
                     .consumer_heartbeat
                     .load(Ordering::Acquire),
             })
@@ -485,5 +517,14 @@ impl<'a, M: ChannelMode<T>, T, const N: usize>
     #[inline(always)]
     pub fn cancel(self) {
         /* cancel is actually a noop lol */
+    }
+}
+
+impl<M: ChannelMode<T>, T, const N: usize> Drop for Producer<M, T, N> {
+    fn drop(&mut self) {
+        // LocalMode is backed by arc
+        if M::BACKED_BY_ARCC {
+            unsafe { drop(Arc::from_raw(self.spsc.as_ptr())) }
+        }
     }
 }

@@ -13,7 +13,7 @@ pub mod page_size;
 
 pub mod shmem;
 
-pub(crate) mod utils;
+// pub(crate) mod utils;
 
 /// Inner type shared by the producer and consumer. Supports zero copy
 /// deserialization. This type is shared by both the headless/lossless
@@ -37,13 +37,19 @@ mod private {
 }
 
 #[allow(private_bounds)]
-pub trait ChannelMode<T>: private::Sealed {}
+pub trait ChannelMode<T>: private::Sealed {
+    const BACKED_BY_ARCC: bool;
+}
 
 pub struct ShmemMode;
 pub struct LocalMode;
 
-impl<T: AnyBitPattern> ChannelMode<T> for ShmemMode {}
-impl<T: Send> ChannelMode<T> for LocalMode {}
+impl<T: AnyBitPattern> ChannelMode<T> for ShmemMode {
+    const BACKED_BY_ARCC: bool = false;
+}
+impl<T: Send> ChannelMode<T> for LocalMode {
+    const BACKED_BY_ARCC: bool = true;
+}
 
 impl private::Sealed for ShmemMode {}
 impl private::Sealed for LocalMode {}
