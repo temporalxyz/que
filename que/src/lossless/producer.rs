@@ -239,7 +239,7 @@ impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
             == unsafe {
                 (*self.spsc.as_ptr())
                     .head
-                    .load(Ordering::Relaxed)
+                    .load(Ordering::Acquire)
             } + N;
         if is_full {
             return Err(QueError::Full);
@@ -346,7 +346,7 @@ impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
         let head = unsafe {
             (*self.spsc.as_ptr())
                 .head
-                .load(Ordering::Relaxed)
+                .load(Ordering::Acquire)
         };
 
         let available_space = N - (self.tail - head);

@@ -5,8 +5,9 @@ use criterion::{
 use que::{
     headless_spmc::{consumer::Consumer, producer::Producer},
     shmem::cleanup_shmem,
-    Channel,
+    Channel, ShmemMode,
 };
+use std::sync::mpsc; // <-- add this
 
 use que::page_size::PageSize;
 
@@ -29,7 +30,9 @@ fn push_pop(c: &mut Criterion) {
     #[cfg(not(target_os = "linux"))]
     let page_size = PageSize::Standard;
     let buffer_size: i64 = page_size
-        .mem_size(core::mem::size_of::<Channel<Transaction<1232>, N>>())
+        .mem_size(core::mem::size_of::<
+            Channel<ShmemMode, Transaction<1232>, N>,
+        >())
         .try_into()
         .unwrap();
 
@@ -41,7 +44,7 @@ fn push_pop(c: &mut Criterion) {
     )
     .ok();
     let mut producer = unsafe {
-        Producer::<Transaction<1232>, N>::join_or_create_shmem(
+        Producer::<ShmemMode, Transaction<1232>, N>::join_or_create_shmem(
             "sh_bench",
             #[cfg(target_os = "linux")]
             page_size,
@@ -49,7 +52,7 @@ fn push_pop(c: &mut Criterion) {
         .unwrap()
     };
     let mut consumer = unsafe {
-        Consumer::<Transaction<1232>, N>::join_shmem(
+        Consumer::<ShmemMode, Transaction<1232>, N>::join_shmem(
             "sh_bench",
             #[cfg(target_os = "linux")]
             page_size,
@@ -57,7 +60,7 @@ fn push_pop(c: &mut Criterion) {
         .unwrap()
     };
 
-    producer.push(black_box(&tx));
+    producer.push(black_box(tx));
     producer.sync();
     assert_eq!(consumer.pop().unwrap(), tx);
 
@@ -68,7 +71,7 @@ fn push_pop(c: &mut Criterion) {
             b.iter(
                 #[inline(always)]
                 || {
-                    producer.push(&tx);
+                    producer.push(tx);
                     producer.sync();
                     consumer.pop();
                 },
@@ -77,5 +80,35 @@ fn push_pop(c: &mut Criterion) {
     );
 }
 
-criterion_group!(spsc, push_pop);
+/// Also benchmark std::sync::mpsc::sync_channel
+fn push_pop_std_mpsc_sync(c: &mut Criterion) {
+    let mut g = c.benchmark_group("StdSyncMpsc");
+    g.throughput(Throughput::Bytes(1232));
+
+    let payload = Transaction { bytes: [1; 1232] };
+
+    // Capacity 1 so each iteration is a strict send->recv (no buffering advantage).
+    let (sender, receiver) = mpsc::sync_channel::<Transaction<1232>>(1);
+
+    // Sanity check
+    sender.send(payload).unwrap();
+    assert_eq!(receiver.recv().unwrap(), payload);
+
+    g.bench_function(
+        "send_recv",
+        #[inline(always)]
+        |b| {
+            b.iter(
+                #[inline(always)]
+                || {
+                    // send a copy, then receive it back
+                    sender.send(black_box(payload)).unwrap();
+                    black_box(receiver.recv().unwrap());
+                },
+            );
+        },
+    );
+}
+
+criterion_group!(spsc, push_pop, push_pop_std_mpsc_sync);
 criterion_main!(spsc);
