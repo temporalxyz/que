@@ -1,0 +1,48 @@
+use std::{
+    ops::Range,
+    thread::JoinHandle,
+    time::{Duration, Instant},
+};
+
+use que::lossless::lossless_pair;
+
+fn main() {
+    let (mut producer, mut consumer) = lossless_pair::<Element, N>();
+
+    // Let's first start some message consumers.
+    let mut i = 0;
+    let consumers: [JoinHandle<()>; 1] = [{
+        i += 1;
+        std::thread::spawn(move || {
+            let mut expected = 0;
+            while expected < NUM_MSGS {
+                if let Some(msg) = consumer.pop() {
+                    println!("got {msg:?}");
+                    assert_eq!(expected..expected + 1, msg);
+                    expected += 1;
+                }
+            }
+            println!("consumer {i} read {NUM_MSGS} messages");
+        })
+    }];
+
+    // Solana mainnet-beta is on the order of O(10,000) TPS.
+    // That's one message every 10 micros.
+    // Let's produce 10,000 msgs at about that pace (1s)
+    let timer = Instant::now();
+    let mut msgs = 0;
+    while msgs < NUM_MSGS {
+        if timer.elapsed() > Duration::from_micros(10 * msgs as u64) {
+            while producer.push(msgs..msgs + 1).is_err() {}
+            producer.sync();
+            msgs += 1;
+        }
+    }
+    for consumer in consumers {
+        consumer.join().unwrap()
+    }
+}
+
+type Element = Range<usize>;
+const N: usize = 1024;
+const NUM_MSGS: usize = 10_000;

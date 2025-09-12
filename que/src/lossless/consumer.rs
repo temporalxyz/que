@@ -118,8 +118,17 @@ impl<M: ChannelMode<T>, T, const N: usize> Consumer<M, T, N> {
     /// Attempts to read the next element. Returns `None` if the
     /// consumer is caught up.
     pub fn pop(&mut self) -> Option<T> {
-        // Optimistically read value and then check if valid
         let head_index = self.head & Self::MODULO_MASK;
+        let tail = unsafe {
+            (*self.spsc.as_ptr())
+                .tail
+                .load(Ordering::Acquire)
+        };
+        let previously_read_or_uninitialized = tail <= self.head;
+        // Nothing else to read
+        if previously_read_or_uninitialized {
+            return None;
+        }
         let value = unsafe {
             core::ptr::read(
                 (*self.spsc.as_ptr())
@@ -128,20 +137,6 @@ impl<M: ChannelMode<T>, T, const N: usize> Consumer<M, T, N> {
                     .add(head_index),
             )
         };
-
-        // Check if valid
-        // 1) is not previously read value
-        let tail = unsafe {
-            (*self.spsc.as_ptr())
-                .tail
-                .load(Ordering::Acquire)
-        };
-        let previously_read_or_uninitialized = tail <= self.head;
-
-        // Nothing else to read
-        if previously_read_or_uninitialized {
-            return None;
-        }
 
         self.head += 1;
         self.items_since_last_sync += 1;
