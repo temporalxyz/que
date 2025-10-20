@@ -31,7 +31,7 @@ main( int argc, char *argv[] ) {
     fprintf( stderr, "head offset:                %ld\n", ((size_t)(&spsc->head) - (size_t)spsc));
     fprintf( stderr, "producer_heartbeat offset:  %ld\n", ((size_t)(&spsc->producer_heartbeat) - (size_t)spsc));
     fprintf( stderr, "consumer_heartbeat offset:  %ld\n", ((size_t)(&spsc->consumer_heartbeat) - (size_t)spsc));
-    fprintf( stderr, "c_padding offset:           %ld\n", ((size_t)(&spsc->c_padding) - (size_t)spsc));
+    fprintf( stderr, "c_padding offset:           %ld\n", ((size_t)(&spsc->padding) - (size_t)spsc));
     fprintf( stderr, "padding offset:             %ld\n", ((size_t)(&spsc->padding) - (size_t)spsc));
     fprintf( stderr, "capacity offset:            %ld\n", ((size_t)(&spsc->capacity) - (size_t)spsc));
     fprintf( stderr, "magic offset:               %ld\n", ((size_t)(&spsc->magic) - (size_t)spsc));

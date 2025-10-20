@@ -258,11 +258,11 @@ impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
         self.tail += 1;
         self.written += 1;
 
-        // Update tail if we've written past burst amount and haven't
-        // updated shared atomic.
-        if self.written == burst_amount::<N>() {
-            self.sync();
-        }
+        // // Update tail if we've written past burst amount and haven't
+        // // updated shared atomic.
+        // if self.written == burst_amount::<N>() {
+        //     self.sync();
+        // }
 
         Ok(())
     }

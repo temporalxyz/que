@@ -17,7 +17,7 @@ main( int argc, char *argv[] ) {
     /* Open or create shared memory */
     const char *_page_sz = parse_str_arg( &argc, &argv, "--page-size", "standard" );
     page_size_t page_sz = parse_page_size( _page_sz );
-    fprintf( stderr, "opening shmem of size %zu with page size %s\n", buffer_size, _page_sz );
+    fprintf( stderr, "opening shmem of size %zu with page size %s=%lu\n", buffer_size, _page_sz, page_sz );
     shmem_t shmem = open_or_create_shmem( shmem_id, buffer_size, page_sz );
     if( !shmem.mem ) {
         return 1;
@@ -26,9 +26,9 @@ main( int argc, char *argv[] ) {
 
 
     /* Join as consumer (must be initialized already) */
-    CONSUMER_(consumer_t) consumer;
+    integer_consumer_consumer_t consumer;
     fprintf( stderr, "joining consumer\n" );
-    if( CONSUMER_(join)( shmem.mem, &consumer ) ) {
+    if( integer_consumer_join( shmem.mem, &consumer ) ) {
         fprintf( stderr, "Failed to join consumer\n" );
         close_shmem( shmem );
         return 1;
@@ -37,18 +37,38 @@ main( int argc, char *argv[] ) {
 
 
     /* ack join */
-    CONSUMER_(beat)( &consumer );
+    fprintf( stderr, "sent consumer ack 1\n" );
+    integer_consumer_beat( &consumer );
 
     /* read value */
     CHANNEL_T value;
-    while( CONSUMER_(pop)( &consumer, &value ) ) {
+    for( int i=0; i<4; i++){
+        while( integer_consumer_pop( &consumer, &value ) ) {
+            /* wait for producer to publish */
+        }
+        fprintf( stderr, "read value %" PRIu64 "\n", value );
+    }
+
+    /* ack message */
+    integer_consumer_beat( &consumer );
+    fprintf( stderr, "sent consumer ack 2\n" );
+    
+    fprintf( stderr, "waiting for producer ack\n" );
+    while( !integer_consumer_producer_heartbeat( &consumer ) ) {}
+    
+    /* read value */
+    fprintf( stderr, "reading value\n" );
+    while( integer_consumer_pop( &consumer, &value ) ) {
         /* wait for producer to publish */
     }
     fprintf( stderr, "read value %" PRIu64 "\n", value );
 
     /* ack message */
-    CONSUMER_(beat)( &consumer );
+    integer_consumer_beat( &consumer );
+    fprintf( stderr, "sent consumer ack 3\n" );
+
 
     /* Clean up */
     close_shmem( shmem );
+    fprintf( stderr, "done\n\n" );
 }

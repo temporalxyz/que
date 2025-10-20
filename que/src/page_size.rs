@@ -3,7 +3,7 @@ pub const fn get_upligned_size(page_size: usize, size: usize) -> usize {
     page_size * size.div_ceil(page_size)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub enum PageSize {
     /// Default system page size (typically 4KiB)
