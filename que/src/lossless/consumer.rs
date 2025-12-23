@@ -1,7 +1,9 @@
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::Ordering;
 use std::{ptr::NonNull, sync::Arc};
 
 use bytemuck::AnyBitPattern;
+use derivative::Derivative;
 
 use crate::{
     error::QueError, page_size::PageSize, shmem::Shmem, ChannelMode,
@@ -49,6 +51,59 @@ impl<T: AnyBitPattern, const N: usize> Consumer<ShmemMode, T, N> {
         )?;
 
         unsafe { Consumer::join(shmem.get_mut_ptr()) }
+    }
+}
+
+#[derive(Derivative)]
+#[derivative(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Element<'a, M: ChannelMode<T>, T, const N: usize> {
+    value: &'a mut T,
+    #[derivative(Debug = "ignore")]
+    #[derivative(PartialEq = "ignore")]
+    #[derivative(PartialOrd = "ignore")]
+    #[derivative(Ord = "ignore")]
+    consumer: &'a mut Consumer<M, T, N>,
+}
+
+impl<'a, M: ChannelMode<T>, T: PartialEq, const N: usize> PartialEq<T>
+    for Element<'a, M, T, N>
+{
+    fn eq(&self, other: &T) -> bool {
+        self.deref().eq(other)
+    }
+}
+impl<'a, M: ChannelMode<T>, T: PartialOrd, const N: usize> PartialOrd<T>
+    for Element<'a, M, T, N>
+{
+    fn partial_cmp(&self, other: &T) -> Option<std::cmp::Ordering> {
+        self.deref().partial_cmp(other)
+    }
+}
+
+impl<'a, M: ChannelMode<T>, T, const N: usize> Drop
+    for Element<'a, M, T, N>
+{
+    fn drop(&mut self) {
+        (*self.consumer).head += 1;
+        (*self.consumer).items_since_last_sync += 1;
+        (*self.consumer).maybe_sync();
+    }
+}
+
+impl<'a, M: ChannelMode<T>, T, const N: usize> Deref
+    for Element<'a, M, T, N>
+{
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.value
+    }
+}
+
+impl<'a, M: ChannelMode<T>, T, const N: usize> DerefMut
+    for Element<'a, M, T, N>
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.value
     }
 }
 
@@ -142,6 +197,36 @@ impl<M: ChannelMode<T>, T, const N: usize> Consumer<M, T, N> {
         self.items_since_last_sync += 1;
         self.maybe_sync();
         return Some(value);
+    }
+
+    /// Attempts to read the next element. Returns `None` if the
+    /// consumer is caught up.
+    pub fn pop_zerocopy<'a>(
+        &'a mut self,
+    ) -> Option<Element<'a, M, T, N>> {
+        let head_index = self.head & Self::MODULO_MASK;
+        let tail = unsafe {
+            (*self.spsc.as_ptr())
+                .tail
+                .load(Ordering::Acquire)
+        };
+        let previously_read_or_uninitialized = tail <= self.head;
+        // Nothing else to read
+        if previously_read_or_uninitialized {
+            return None;
+        }
+        let value: &mut T = unsafe {
+            &mut *(*self.spsc.as_ptr())
+                .buffer
+                .as_mut_ptr()
+                .add(head_index)
+        };
+        let element = Element {
+            value,
+            consumer: self,
+        };
+
+        return Some(element);
     }
 
     /// Increments the consumer heartbeat.

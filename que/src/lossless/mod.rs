@@ -69,6 +69,28 @@ mod tests {
     }
 
     #[test]
+    fn test_push_pop_zerocopy() {
+        let (mut producer, mut consumer) = lossless_pair::<u64, 16>();
+
+        producer.push(69).unwrap();
+        producer.push(70).unwrap();
+        assert!(consumer.pop_zerocopy().is_none());
+
+        producer.sync();
+        assert_eq!(consumer.pop_zerocopy().map(|e| *e), Some(69));
+        assert_eq!(consumer.pop_zerocopy().map(|e| *e), Some(70));
+
+        producer.push(71).unwrap();
+        producer.push(72).unwrap();
+        assert_eq!(consumer.pop(), None);
+
+        producer.sync();
+        let ele: Option<consumer::Element<'_, LocalMode, u64, 16>> =
+            consumer.pop_zerocopy();
+        assert_eq!(ele.as_deref(), Some(&71));
+    }
+
+    #[test]
     fn test_push_pop_overrun() {
         let (mut producer, mut consumer) = lossless_pair::<u64, 4>();
 
