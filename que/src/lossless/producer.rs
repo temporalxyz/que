@@ -265,11 +265,9 @@ impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
         self.tail += 1;
         self.written += 1;
 
-        // // Update tail if we've written past burst amount and haven't
-        // // updated shared atomic.
-        // if self.written == burst_amount::<N>() {
-        //     self.sync();
-        // }
+        if self.written == burst_amount::<N>() {
+            self.sync();
+        }
 
         Ok(())
     }
@@ -349,21 +347,17 @@ impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
             return Err(QueError::InvalidSize);
         }
 
-        // Check if we have space
-        let head = if self.tail == self.head_cache + N {
+        let mut available_space = N - (self.tail - self.head_cache);
+        if count > available_space {
             self.head_cache = unsafe {
                 (*self.spsc.as_ptr())
                     .head
                     .load(Ordering::Acquire)
             };
-            self.head_cache
-        } else {
-            self.head_cache
-        };
-
-        let available_space = N - (self.tail - head);
-        if count > available_space {
-            return Err(QueError::Full);
+            available_space = N - (self.tail - self.head_cache);
+            if count > available_space {
+                return Err(QueError::Full);
+            }
         }
 
         Ok(Reservation {
