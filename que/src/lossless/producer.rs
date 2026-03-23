@@ -14,6 +14,7 @@ use super::{burst_amount, Channel};
 pub struct Producer<M: ChannelMode<T>, T, const N: usize> {
     spsc: NonNull<Channel<M, T, N>>,
     tail: usize,
+    head_cache: usize,
     /// Number of elements written since last sync
     written: usize,
     last_consumer_heartbeat: usize,
@@ -67,6 +68,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<ShmemMode, T, N> {
             Ok(Producer {
                 spsc: NonNull::new(shmem.get_mut_ptr().cast()).unwrap(),
                 tail: (*spsc).tail.load(Ordering::Acquire),
+                head_cache: (*spsc).head.load(Ordering::Acquire),
                 written: 0,
                 last_consumer_heartbeat: (*spsc)
                     .consumer_heartbeat
@@ -82,6 +84,7 @@ impl<T: AnyBitPattern, const N: usize> Producer<ShmemMode, T, N> {
             Ok(Producer {
                 spsc: NonNull::new(shmem.get_mut_ptr().cast()).unwrap(),
                 tail: 0,
+                head_cache: 0,
                 written: 0,
                 last_consumer_heartbeat: (*spsc)
                     .consumer_heartbeat
@@ -154,6 +157,7 @@ impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
             Ok(Producer {
                 spsc: NonNull::new(buffer.cast()).unwrap(),
                 tail: (*spsc).tail.load(Ordering::Acquire),
+                head_cache: (*spsc).head.load(Ordering::Acquire),
                 written: 0,
                 last_consumer_heartbeat: (*spsc)
                     .consumer_heartbeat
@@ -175,6 +179,7 @@ impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
             Ok(Producer {
                 spsc: NonNull::new(buffer.cast()).unwrap(),
                 tail: 0,
+                head_cache: 0,
                 written: 0,
                 last_consumer_heartbeat: (*spsc)
                     .consumer_heartbeat
@@ -215,6 +220,7 @@ impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
             Ok(Producer {
                 spsc: NonNull::new(buffer.cast()).unwrap(),
                 tail: (*spsc).tail.load(Ordering::Acquire),
+                head_cache: (*spsc).head.load(Ordering::Acquire),
                 written: 0,
                 last_consumer_heartbeat: (*spsc)
                     .consumer_heartbeat
@@ -235,14 +241,15 @@ impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
     #[inline(always)]
     pub fn push(&mut self, value: T) -> Result<(), QueError> {
         // Check if full
-        let is_full = self.tail
-            == unsafe {
+        if self.tail == self.head_cache + N {
+            self.head_cache = unsafe {
                 (*self.spsc.as_ptr())
                     .head
                     .load(Ordering::Acquire)
-            } + N;
-        if is_full {
-            return Err(QueError::Full);
+            };
+            if self.tail == self.head_cache + N {
+                return Err(QueError::Full);
+            }
         }
 
         // Write value if not full
@@ -258,11 +265,9 @@ impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
         self.tail += 1;
         self.written += 1;
 
-        // // Update tail if we've written past burst amount and haven't
-        // // updated shared atomic.
-        // if self.written == burst_amount::<N>() {
-        //     self.sync();
-        // }
+        if self.written == burst_amount::<N>() {
+            self.sync();
+        }
 
         Ok(())
     }
@@ -342,16 +347,17 @@ impl<M: ChannelMode<T>, T, const N: usize> Producer<M, T, N> {
             return Err(QueError::InvalidSize);
         }
 
-        // Check if we have space
-        let head = unsafe {
-            (*self.spsc.as_ptr())
-                .head
-                .load(Ordering::Acquire)
-        };
-
-        let available_space = N - (self.tail - head);
+        let mut available_space = N - (self.tail - self.head_cache);
         if count > available_space {
-            return Err(QueError::Full);
+            self.head_cache = unsafe {
+                (*self.spsc.as_ptr())
+                    .head
+                    .load(Ordering::Acquire)
+            };
+            available_space = N - (self.tail - self.head_cache);
+            if count > available_space {
+                return Err(QueError::Full);
+            }
         }
 
         Ok(Reservation {
