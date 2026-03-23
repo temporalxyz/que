@@ -11,6 +11,7 @@ repository = "https://github.com/temporalxyz/que.git"
 
 [dependencies]
 bytemuck = { workspace = true }
+derivative = { workspace = true }
 nix = { workspace = true }
 
 [dev-dependencies]

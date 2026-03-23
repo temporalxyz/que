@@ -3,7 +3,7 @@
 /* Align size to the nearest page size */
 size_t
 align_to_page_size( size_t size, page_size_t page_size ) {
-    size_t page_size_ = page_size;
+    size_t page_size_ = (size_t) page_size;
     if( page_size == STANDARD_PAGE ) {
         page_size_ = sysconf(_SC_PAGE_SIZE);
         if( page_size == -1 ) {
@@ -22,8 +22,10 @@ open_or_create_shmem( const char *id, size_t size, page_size_t page_size ) {
 
     int flags = O_RDWR | O_CREAT;
     int mmap_flags = MAP_SHARED;
+    #if __linux__
     const char *huge_hugetlbfs_path = "/mnt/hugepages";
     const char *giga_hugetlbfs_path = "/mnt/gigantic";
+    #endif
 
     /* Align size to the nearest page size */
     size = align_to_page_size( size, page_size );
@@ -67,7 +69,7 @@ open_or_create_shmem( const char *id, size_t size, page_size_t page_size ) {
         shmem.fd = -1;
         return shmem;
     }
-    if( stat_buf.st_size != size ) {
+    if( (size_t)stat_buf.st_size != size ) {
         if( ftruncate( shmem.fd, size ) == -1 ) {
             perror( "ftruncate failed" );
             close( shmem.fd );

@@ -1,4 +1,7 @@
-use std::sync::atomic::{AtomicU64, AtomicUsize};
+use std::{
+    marker::PhantomData,
+    sync::atomic::{AtomicU64, AtomicUsize},
+};
 
 use bytemuck::AnyBitPattern;
 use padded_atomic::CachePaddedAtomicUsize;
@@ -10,15 +13,14 @@ pub mod page_size;
 
 pub mod shmem;
 
-#[cfg(test)]
-pub(crate) mod test_utils;
+// pub(crate) mod utils;
 
 /// Inner type shared by the producer and consumer. Supports zero copy
 /// deserialization. This type is shared by both the headless/lossless
 /// channel so that a user can choose to toggle backpressure when
 /// restarting a system.
 #[repr(C, align(128))]
-pub struct Channel<T, const N: usize> {
+pub struct Channel<M, T, const N: usize> {
     tail: CachePaddedAtomicUsize,
     head: CachePaddedAtomicUsize,
     producer_heartbeat: CachePaddedAtomicUsize,
@@ -27,9 +29,32 @@ pub struct Channel<T, const N: usize> {
     capacity: AtomicUsize,
     magic: AtomicU64,
     buffer: [T; N],
+    mode: PhantomData<M>,
 }
 
-impl<T, const N: usize> Channel<T, N> {
+mod private {
+    pub trait Sealed {}
+}
+
+#[allow(private_bounds)]
+pub trait ChannelMode<T>: private::Sealed {
+    const BACKED_BY_ARCC: bool;
+}
+
+pub struct ShmemMode;
+pub struct LocalMode;
+
+impl<T: AnyBitPattern> ChannelMode<T> for ShmemMode {
+    const BACKED_BY_ARCC: bool = false;
+}
+impl<T: Send> ChannelMode<T> for LocalMode {
+    const BACKED_BY_ARCC: bool = true;
+}
+
+impl private::Sealed for ShmemMode {}
+impl private::Sealed for LocalMode {}
+
+impl<M, T, const N: usize> Channel<M, T, N> {
     #[rustfmt::skip]
     pub fn print_layout() {
         println!("Channel::<{}, {N}> Layout", core::any::type_name::<T>());
@@ -51,7 +76,7 @@ impl<T, const N: usize> Channel<T, N> {
 pub const MAGIC: u64 = u64::from_le_bytes(*b"TEMPORAL");
 
 /// We use `AnyBitPattern` instead of `Pod` as it's a superset of `Pod`
-unsafe impl<T: AnyBitPattern, const N: usize> Sync for Channel<T, N> {}
+unsafe impl<M, T, const N: usize> Sync for Channel<M, T, N> {}
 
 pub mod error {
     use crate::shmem::ShmemError;

@@ -1,7 +1,6 @@
 #ifndef QUE_QUE_H
 #define QUE_QUE_H
 
-
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -30,21 +29,49 @@
 #define MAGIC 5494763520971851092 /* "TEMPORAL" */
 #define ALIGNMENT 128
 
+typedef struct {
+    atomic_size_t value;
+    char padding[128 - sizeof(atomic_size_t)];
+} __attribute__((aligned(128))) cache_padded_atomic_t;
+
+/* Channel struct matching Rust layout exactly */
 typedef struct QUE_(spsc) {
-    atomic_size_t tail __attribute__((aligned(128)));
-    atomic_size_t head __attribute__((aligned(128)));
-    atomic_size_t producer_heartbeat __attribute__((aligned(128)));
-    atomic_size_t consumer_heartbeat __attribute__((aligned(128)));
-    char c_padding[128 - sizeof(size_t)]; // Add padding; this one needs to be declared explicitly in C since the type is 8 bytes (Rust CachePaddedUsize is 128 bytes).
-    char padding[128 - 2 * sizeof(uint64_t)]; // Add padding to make size a multiple of 128 bytes. This is the padding seen in the Rust lib.
+    /* Offset 0: tail (128 bytes) */
+    cache_padded_atomic_t tail;
+    
+    /* Offset 128: head (128 bytes) */
+    cache_padded_atomic_t head;
+    
+    /* Offset 256: producer_heartbeat (128 bytes) */
+    cache_padded_atomic_t producer_heartbeat;
+    
+    /* Offset 384: consumer_heartbeat (128 bytes) */
+    cache_padded_atomic_t consumer_heartbeat;
+    
+    /* Offset 512: padding (112 bytes) */
+    char padding[112];
+    
+    /* Offset 624: capacity (8 bytes) */
     uint64_t capacity;
-    uint64_t magic; /* Magic value to check initialization */
+    
+    /* Offset 632: magic (8 bytes) */
+    uint64_t magic;
+    
+    /* Offset 640: buffer starts here */
+    /* Buffer follows immediately after in memory */
 } __attribute__((aligned(128))) QUE_(spsc_t);
 
+/* Calculate burst amount - 1/4 of buffer or minimum 1 */
 static inline uint64_t
 burst_amount( uint64_t N ) {
     uint64_t x = N / 4;
     return (x == 0) ? 1 : x;
+}
+
+/* Helper to get buffer pointer */
+static inline void*
+get_buffer_ptr( QUE_(spsc_t) *spsc ) {
+    return (char *)spsc + 640;  /* Buffer starts at offset 640 */
 }
 
 #endif /* QUE_QUE_H */
