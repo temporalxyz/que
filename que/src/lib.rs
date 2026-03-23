@@ -1,9 +1,10 @@
-use std::{
-    marker::PhantomData,
-    sync::atomic::{AtomicU64, AtomicUsize},
-};
+use std::marker::PhantomData;
 
 use bytemuck::AnyBitPattern;
+
+mod atomic_compat;
+
+use atomic_compat::{AtomicU64, AtomicUsize};
 use padded_atomic::CachePaddedAtomicUsize;
 
 pub mod headless_spmc;
@@ -55,6 +56,31 @@ impl private::Sealed for ShmemMode {}
 impl private::Sealed for LocalMode {}
 
 impl<M, T, const N: usize> Channel<M, T, N> {
+    /// Writes a valid empty channel with properly constructed Loom atomics at
+    /// `ptr` (must be 128-byte aligned, `size_of::<Self>()` bytes).
+    ///
+    /// Loom atomics cannot be used after zeroing raw memory; Loom tests only.
+    #[cfg(all(loom, test))]
+    pub(crate) unsafe fn loom_write_fresh_empty_at(ptr: *mut u8)
+    where
+        T: bytemuck::Zeroable,
+        M: ChannelMode<T>,
+    {
+        assert!((ptr as usize).is_multiple_of(128), "unaligned");
+        let ch = ptr.cast::<Self>();
+        core::ptr::write(ch, Self {
+            tail: CachePaddedAtomicUsize::new(0),
+            head: CachePaddedAtomicUsize::new(0),
+            producer_heartbeat: CachePaddedAtomicUsize::new(0),
+            consumer_heartbeat: CachePaddedAtomicUsize::new(0),
+            padding: [0; 128 - 16],
+            capacity: AtomicUsize::new(N),
+            magic: AtomicU64::new(MAGIC),
+            buffer: bytemuck::Zeroable::zeroed(),
+            mode: PhantomData,
+        });
+    }
+
     #[rustfmt::skip]
     pub fn print_layout() {
         println!("Channel::<{}, {N}> Layout", core::any::type_name::<T>());

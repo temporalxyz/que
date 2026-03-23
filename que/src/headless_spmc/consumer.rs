@@ -1,4 +1,4 @@
-use std::sync::atomic::Ordering;
+use crate::atomic_compat::Ordering;
 use std::{ptr::NonNull, sync::Arc};
 
 use bytemuck::AnyBitPattern;

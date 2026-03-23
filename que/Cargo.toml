@@ -8,15 +8,22 @@ description = "A high performance channel with optional backpressure, interproce
 repository = "https://github.com/temporalxyz/que.git"
 
 [features]
+default = []
+loom = ["dep:loom"]
 
 [dependencies]
 bytemuck = { workspace = true }
 derivative = { workspace = true }
+loom = { version = "0.7.2", optional = true }
 nix = { workspace = true }
 
 [dev-dependencies]
 bytemuck = { workspace = true, features = ["derive", "min_const_generics"] }
 criterion = "0.5.1"
+loom = { version = "0.7.2" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
 
 [[bench]]

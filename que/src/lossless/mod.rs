@@ -43,7 +43,12 @@ pub fn lossless_pair<T: Send, const N: usize>(
     (producer, consumer)
 }
 
-#[cfg(test)]
+// Not run with `feature = "loom"`: `LocalMode` uses `Arc<Channel<…>>` with Loom
+// atomics; `Producer` / `Consumer` / `Arc` drops run after `loom::model` returns
+// (invalid). `std::thread` + Loom atomics is also invalid for
+// `test_synchronized_metadata`. Additive Loom coverage is `loom_tests`
+// (`ShmemMode`, stack buffer, `loom::thread`).
+#[cfg(all(test, not(loom)))]
 mod tests {
     use producer::Producer;
 
@@ -100,6 +105,8 @@ mod tests {
         assert!(producer.push(72).is_ok());
         assert!(producer.push(73).is_err());
 
+        producer.sync();
+
         assert_eq!(consumer.pop(), Some(69));
         assert_eq!(consumer.pop(), Some(70));
         assert_eq!(consumer.pop(), Some(71));
@@ -107,6 +114,7 @@ mod tests {
 
         // This should now succeed, along with next read
         assert!(producer.push(73).is_ok());
+        producer.sync();
         assert_eq!(consumer.pop(), Some(73));
     }
 
@@ -246,6 +254,7 @@ mod tests {
         producer.push(2).unwrap();
         producer.push(3).unwrap();
         producer.push(4).unwrap();
+        producer.sync();
 
         // Try to reserve space - should fail
         let data: &[u8] = &[5, 6];
@@ -266,3 +275,6 @@ mod tests {
         assert_eq!(consumer.pop(), None);
     }
 }
+
+#[cfg(all(test, loom))]
+mod loom_tests;

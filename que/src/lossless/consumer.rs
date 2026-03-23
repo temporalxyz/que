@@ -1,11 +1,11 @@
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::Ordering;
 use std::{ptr::NonNull, sync::Arc};
 
 use bytemuck::AnyBitPattern;
 use derivative::Derivative;
 
 use crate::{
+    atomic_compat::Ordering,
     error::QueError, page_size::PageSize, shmem::Shmem, ChannelMode,
     ShmemMode, MAGIC,
 };

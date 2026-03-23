@@ -1,7 +1,6 @@
-use std::{
-    ops::{Deref, DerefMut},
-    sync::atomic::AtomicUsize,
-};
+use std::ops::{Deref, DerefMut};
+
+use crate::atomic_compat::AtomicUsize;
 
 /// Simple 128-byte aligned wrapper around an `AtomicUsize` to prevent
 /// false sharing.
@@ -21,5 +20,14 @@ impl Deref for CachePaddedAtomicUsize {
 impl DerefMut for CachePaddedAtomicUsize {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
+    }
+}
+
+impl CachePaddedAtomicUsize {
+    #[cfg(all(loom, test))]
+    pub(crate) fn new(value: usize) -> Self {
+        Self {
+            inner: AtomicUsize::new(value),
+        }
     }
 }

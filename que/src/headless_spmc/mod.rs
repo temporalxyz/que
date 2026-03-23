@@ -76,7 +76,11 @@ const fn burst_amount<const N: usize>() -> usize {
     }
 }
 
-#[cfg(test)]
+// Not run with `feature = "loom"`: `LocalMode` holds `Arc<Channel<…>>` with Loom
+// atomics; `Producer` / `Consumer` / `Arc` drops run after a `loom::model` closure
+// returns, which touches Loom atomics outside the model (invalid). Use
+// `lossless::loom_tests` for Loom coverage (`ShmemMode`, stack buffer).
+#[cfg(all(test, not(loom)))]
 mod tests {
     use producer::Producer;
 
